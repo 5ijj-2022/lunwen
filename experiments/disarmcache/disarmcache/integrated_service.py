@@ -188,6 +188,28 @@ class LocalCausalGenerator:
         return self.tokenizer.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True).strip()
 
 
+class OpenAICompatibleGenerator:
+    """Call an OpenAI-compatible chat API; credentials stay in environment."""
+    def __init__(self, model: str, base_url: str | None = None, api_key_env: str = "OPENAI_API_KEY"):
+        from openai import OpenAI
+        import os
+        key = os.environ.get(api_key_env)
+        if not key:
+            raise RuntimeError(f"Missing {api_key_env}; set it on the server, never in source")
+        self.model = model
+        self.client = OpenAI(api_key=key, base_url=base_url or None)
+
+    def __call__(self, query: str, docs: list[dict[str, Any]]) -> str:
+        context = "\n".join(f"[{d['id']}] {d['text']}" for d in docs)
+        r = self.client.chat.completions.create(
+            model=self.model,
+            temperature=0,
+            messages=[{"role":"system","content":"Answer using only supplied evidence."},
+                      {"role":"user","content":f"Evidence:\n{context}\nQuestion: {query}"}],
+        )
+        return r.choices[0].message.content or ""
+
+
 class RAGCacheService:
     def __init__(self, retriever, cache, generator, log_path: str):
         self.retriever, self.cache, self.generator = retriever, cache, generator
@@ -224,6 +246,9 @@ def main():
     p.add_argument("--disarmrag-source-zip", default="../../references/DisarmRAG-poisoning-attack-main.zip")
     p.add_argument("--cache-model", required=True)
     p.add_argument("--generator-model", required=True)
+    p.add_argument("--generator-backend", choices=["local", "openai"], default="local")
+    p.add_argument("--api-base-url", default=None)
+    p.add_argument("--api-key-env", default="OPENAI_API_KEY")
     p.add_argument("--corpus", required=True, help="JSONL records with id,text and optional poisoned")
     p.add_argument("--retriever-version", required=True)
     p.add_argument("--device", default="cuda")
@@ -240,7 +265,9 @@ def main():
     else:
         retriever = retriever_cls(args.retriever_model, args.corpus, args.retriever_version, args.device)
     cache = ProvenanceCache(SentenceTransformerEncoder(args.cache_model, args.device), args.threshold, args.cache_file)
-    service = RAGCacheService(retriever, cache, LocalCausalGenerator(args.generator_model, args.device), args.log_file)
+    generator = (OpenAICompatibleGenerator(args.generator_model, args.api_base_url, args.api_key_env)
+                 if args.generator_backend == "openai" else LocalCausalGenerator(args.generator_model, args.device))
+    service = RAGCacheService(retriever, cache, generator, args.log_file)
     print(json.dumps({"status": "loaded", "retriever_version": args.retriever_version,
                       "documents": len(retriever.docs), "cache_entries": len(cache.entries)}))
     if args.http_host:
