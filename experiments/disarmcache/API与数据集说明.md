@@ -1,6 +1,7 @@
 # API 与数据集方案
 
-当前实现支持两类生成器：服务器本地 HuggingFace 模型，以及 OpenAI 兼容聊天 API。代码此前没有实际调用 API；真实主实验应由服务器设置密钥后运行。
+当前实现支持两类生成器：服务器本地 HuggingFace 模型，以及 OpenAI 兼容聊天 API。API 密钥只在
+服务器当前 shell 中注入，不能写入代码、仓库或日志。
 
 ## 推荐模型分工
 
@@ -13,21 +14,32 @@ BI 候选优化如果复现 DisarmRAG 原论文，可以使用其配置的代理
 在服务器环境设置 `OPENAI_API_KEY`，不要写入命令行、代码、JSONL 或 Git：
 
 ```bash
-export OPENAI_API_KEY='服务器安全注入的值'
 cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
+read -rsp "OPENAI_API_KEY: " OPENAI_API_KEY; echo
+export OPENAI_API_KEY
+export PROJECT_ROOT=/data1/lab409/wwj/lunwen-main
+export MODEL_DIR=/data1/lab409/wwj/models
+export DATA_DIR="$PROJECT_ROOT/experiments/disarmcache/data"
+export RUN_DIR="$PROJECT_ROOT/experiments/disarmcache/runs/real/api"
+mkdir -p "$RUN_DIR"
 PYTHONPATH=. python3 -m disarmcache.integrated_service \
-  --retriever-model /models/contriever-edited \
+  --retriever-model "$MODEL_DIR/contriever-edited" \
   --retriever-backend disarmrag \
-  --cache-model sentence-transformers/all-MiniLM-L6-v2 \
+  --disarmrag-source-zip "$PROJECT_ROOT/references/DisarmRAG-poisoning-attack-main.zip" \
+  --cache-model "$MODEL_DIR/all-MiniLM-L6-v2" \
   --generator-backend openai \
   --generator-model gpt-4o-mini \
-  --corpus data/nq_subset.jsonl \
+  --corpus "$DATA_DIR/corpus.jsonl" \
   --retriever-version disarmrag-edit-001 \
   --device cuda --threshold 0.80 \
-  --http-host 0.0.0.0 --http-port 8080
+  --cache-file "$RUN_DIR/cache.jsonl" \
+  --log-file "$RUN_DIR/events.jsonl" \
+  --http-host 127.0.0.1 --http-port 8080
 ```
 
-如果使用兼容服务，增加 `--api-base-url https://兼容服务地址/v1`。日志只保存模型名称、请求 ID、路径和 token 用量摘要；不保存密钥。
+如果使用兼容服务，增加 `--api-base-url https://兼容服务地址/v1`。当前日志保存请求、命中路径、
+相似度、答案、缓存条目、检索器版本和证据 ID，不保存密钥；API token 用量和费用从服务商控制台
+单独导出。
 
 ## 数据集用途
 
