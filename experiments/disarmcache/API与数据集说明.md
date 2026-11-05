@@ -29,7 +29,7 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --cache-model "$MODEL_DIR/all-MiniLM-L6-v2" \
   --generator-backend openai \
   --generator-model gpt-4o-mini \
-  --corpus "$DATA_DIR/corpus_clean.jsonl" \
+  --corpus "$DATA_DIR/corpus_poisoned.jsonl" \
   --retriever-version disarmrag-edit-001 \
   --device cuda --threshold 0.80 \
   --cache-file "$RUN_DIR/cache.jsonl" \
