@@ -12,6 +12,7 @@ import json
 import time
 import sys
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -229,6 +230,8 @@ def main():
     p.add_argument("--threshold", type=float, default=0.80)
     p.add_argument("--cache-file", default="runs/real/cache.jsonl")
     p.add_argument("--log-file", default="runs/real/events.jsonl")
+    p.add_argument("--http-host", default=None, help="Expose /query and /invalidate instead of stdin")
+    p.add_argument("--http-port", type=int, default=8080)
     args = p.parse_args()
     retriever_cls = DisarmRAGRetriever if args.retriever_backend == "disarmrag" else ContrieverRetriever
     if retriever_cls is DisarmRAGRetriever:
@@ -240,6 +243,33 @@ def main():
     service = RAGCacheService(retriever, cache, LocalCausalGenerator(args.generator_model, args.device), args.log_file)
     print(json.dumps({"status": "loaded", "retriever_version": args.retriever_version,
                       "documents": len(retriever.docs), "cache_entries": len(cache.entries)}))
+    if args.http_host:
+        service_ref = service
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, status, payload):
+                body = json.dumps(payload, ensure_ascii=False).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def do_POST(self):
+                try:
+                    n = int(self.headers.get("Content-Length", "0"))
+                    data = json.loads(self.rfile.read(n) or b"{}")
+                    if self.path == "/query":
+                        self._json(200, service_ref.query(str(data["query"])))
+                    elif self.path == "/invalidate":
+                        ids = service_ref.cache.invalidate(set(data.get("retriever_versions", [])))
+                        self._json(200, {"invalidated": ids})
+                    else:
+                        self._json(404, {"error": "unknown endpoint"})
+                except Exception as exc:
+                    self._json(400, {"error": str(exc)})
+            def log_message(self, *_):
+                return
+        ThreadingHTTPServer((args.http_host, args.http_port), Handler).serve_forever()
+        return
     for line in __import__("sys").stdin:
         line = line.strip()
         if line:
