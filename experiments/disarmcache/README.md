@@ -38,3 +38,7 @@ requirement.
 The upstream ZIPs and the DOCX are retained under `upstream/` and
 `draft_extracted.txt`; attached-document text is treated as a research plan,
 not as evidence that any result has been measured.
+
+For the actual model-backed integration, see [REAL_RUN.md](REAL_RUN.md) and
+`disarmcache/integrated_service.py`. It connects a clean or DisarmRAG-edited
+Contriever checkpoint to an independent cache encoder and a local generator.
