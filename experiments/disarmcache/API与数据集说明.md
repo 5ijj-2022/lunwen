@@ -14,6 +14,7 @@ BI 候选优化如果复现 DisarmRAG 原论文，可以使用其配置的代理
 
 ```bash
 export OPENAI_API_KEY='服务器安全注入的值'
+cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
 PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --retriever-model /models/contriever-edited \
   --retriever-backend disarmrag \

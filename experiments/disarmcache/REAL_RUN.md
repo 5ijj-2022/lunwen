@@ -3,7 +3,7 @@
 该入口已经把检索器、生成器、语义缓存和来源追踪接通。它读取 JSONL 语料，加载真实 HuggingFace 模型，并通过标准输入逐行处理问题；每次请求都会先查语义缓存，未命中才检索和生成，生成结果随后正常写入缓存。
 
 ```bash
-cd /workspace/lunwen/experiments/disarmcache
+cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
 python3 -m pip install torch transformers sentence-transformers numpy
 PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --retriever-model /models/contriever-edited \

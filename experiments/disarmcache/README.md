@@ -15,9 +15,12 @@ replace the retriever and generator adapters while preserving the event schema.
 ## Run the offline smoke experiment
 
 ```bash
-cd /workspace/research/disarmcache
+cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
 python3 -m disarmcache.cli --out runs/smoke
 ```
+
+服务器从 GitHub 下载后，项目目录名为 `lunwen-main`。如果项目放在其他父目录，
+只修改 `cd` 命令中的 `/data1/lab409/wwj`，不要修改实验代码或内部相对路径。
 
 Outputs are JSONL request/event logs, a summary JSON, and a Markdown report.
 The smoke run covers clean RAG, poisoned RAG, naive composition, cache-aware
