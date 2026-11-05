@@ -10,6 +10,8 @@ import argparse
 import hashlib
 import json
 import time
+import sys
+import zipfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -55,6 +57,50 @@ class ContrieverRetriever:
         scores = self.doc_vectors @ q
         ids = np.argsort(-scores)[:self.top_k]
         return [{**self.docs[i], "score": float(scores[i])} for i in ids]
+
+
+class DisarmRAGRetriever(ContrieverRetriever):
+    """Adapter that calls the Contriever loader shipped by DisarmRAG.
+
+    `model_name` may be a clean HF directory or an edited DisarmRAG directory
+    containing `checkpoint.pth`. The source archive is unpacked once so the
+    original `load_retriever` implementation remains the model-loading source.
+    """
+    def __init__(self, model_name: str, corpus_path: str, version: str,
+                 source_zip: str, device: str = "cpu", top_k: int = 5,
+                 max_length: int = 256):
+        import tempfile
+        import torch
+        with zipfile.ZipFile(source_zip) as z:
+            root_name = z.namelist()[0].split("/", 1)[0]
+            vendor = Path(tempfile.gettempdir()) / "disarmrag-source"
+            marker = vendor / ".ready"
+            if not marker.exists():
+                vendor.mkdir(parents=True, exist_ok=True)
+                z.extractall(vendor)
+                marker.write_text(root_name)
+        source_root = vendor / root_name
+        sys.path.insert(0, str(source_root))
+        from src.contriever_src.contriever import load_retriever
+        self.torch = torch
+        self.device = torch.device(device)
+        self.model, self.tokenizer, self.base_model_id = load_retriever(model_name)
+        self.model.to(self.device).eval()
+        self.version, self.top_k, self.max_length = version, top_k, max_length
+        self.docs = [json.loads(x) for x in Path(corpus_path).read_text().splitlines() if x.strip()]
+        self.doc_vectors = self._encode([d["text"] for d in self.docs])
+
+    def _encode(self, texts: list[str]) -> np.ndarray:
+        out = []
+        with self.torch.no_grad():
+            for i in range(0, len(texts), 32):
+                batch = self.tokenizer.batch_encode_plus(
+                    texts[i:i+32], max_length=self.max_length, padding=True,
+                    truncation=True, return_tensors="pt")
+                batch = {k: v.to(self.device) for k, v in batch.items()}
+                v = self.model(**batch, normalize=True)
+                out.append(v.detach().cpu().numpy())
+        return np.concatenate(out) if out else np.zeros((0, 1), dtype=np.float32)
 
 
 class SentenceTransformerEncoder:
@@ -173,6 +219,8 @@ class RAGCacheService:
 def main():
     p = argparse.ArgumentParser(description="Real DisarmRAG-compatible RAG semantic-cache service")
     p.add_argument("--retriever-model", required=True)
+    p.add_argument("--retriever-backend", choices=["hf", "disarmrag"], default="disarmrag")
+    p.add_argument("--disarmrag-source-zip", default="../../references/DisarmRAG-poisoning-attack-main.zip")
     p.add_argument("--cache-model", required=True)
     p.add_argument("--generator-model", required=True)
     p.add_argument("--corpus", required=True, help="JSONL records with id,text and optional poisoned")
@@ -182,7 +230,12 @@ def main():
     p.add_argument("--cache-file", default="runs/real/cache.jsonl")
     p.add_argument("--log-file", default="runs/real/events.jsonl")
     args = p.parse_args()
-    retriever = ContrieverRetriever(args.retriever_model, args.corpus, args.retriever_version, args.device)
+    retriever_cls = DisarmRAGRetriever if args.retriever_backend == "disarmrag" else ContrieverRetriever
+    if retriever_cls is DisarmRAGRetriever:
+        retriever = retriever_cls(args.retriever_model, args.corpus, args.retriever_version,
+                                  args.disarmrag_source_zip, args.device)
+    else:
+        retriever = retriever_cls(args.retriever_model, args.corpus, args.retriever_version, args.device)
     cache = ProvenanceCache(SentenceTransformerEncoder(args.cache_model, args.device), args.threshold, args.cache_file)
     service = RAGCacheService(retriever, cache, LocalCausalGenerator(args.generator_model, args.device), args.log_file)
     print(json.dumps({"status": "loaded", "retriever_version": args.retriever_version,

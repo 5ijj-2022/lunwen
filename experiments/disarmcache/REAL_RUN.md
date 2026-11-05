@@ -5,8 +5,10 @@
 ```bash
 cd /workspace/lunwen/experiments/disarmcache
 python3 -m pip install torch transformers sentence-transformers numpy
-python3 -m disarmcache.integrated_service \
+PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --retriever-model /models/contriever-edited \
+  --retriever-backend disarmrag \
+  --disarmrag-source-zip ../../references/DisarmRAG-poisoning-attack-main.zip \
   --cache-model sentence-transformers/all-MiniLM-L6-v2 \
   --generator-model /models/Qwen2.5-7B-Instruct \
   --corpus data/corpus.jsonl \
