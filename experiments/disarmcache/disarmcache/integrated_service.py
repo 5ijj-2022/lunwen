@@ -325,7 +325,8 @@ class OpenAICompatibleGenerator:
         if not key:
             raise RuntimeError(f"Missing {api_key_env}; set it on the server, never in source")
         self.model = model
-        self.client = OpenAI(api_key=key, base_url=base_url or None)
+        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
+        self.client = OpenAI(api_key=key, base_url=self.base_url or None)
         self.prompt_catalog = prompt_catalog or PromptCatalog()
         self.prompt_catalog.render(prompt_variant, "prompt validation", [])
 

@@ -37,7 +37,8 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --http-host 127.0.0.1 --http-port 8080
 ```
 
-如果使用兼容服务，增加 `--api-base-url https://兼容服务地址/v1`。当前日志保存请求、命中路径、
+如果使用兼容服务，增加 `--api-base-url https://兼容服务地址/v1`，或提前设置
+`OPENAI_BASE_URL`/`OPENAI_API_BASE`。当前日志保存请求、命中路径、
 相似度、答案、缓存条目、检索器版本和证据 ID，不保存密钥；API token 用量和费用从服务商控制台
 单独导出。
 
