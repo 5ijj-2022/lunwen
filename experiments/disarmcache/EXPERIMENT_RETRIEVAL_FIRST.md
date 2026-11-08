@@ -33,8 +33,9 @@ curl -sS -X POST http://127.0.0.1:8080/retrieve \
   | python -m json.tool
 ```
 
-返回中的 `retrieval.documents` 包含文档、排名、分数和 `poisoned` 标记，`cache.entry` 包含
-匹配缓存条目的 query、answer、证据 ID、检索器版本和提示词版本。
+返回中的 `retrieval.documents` 包含文档、排名、分数和 `poisoned` 标记，命中时
+`cache.matched_entry` 包含缓存条目的 query、answer、证据 ID、检索器版本和提示词版本；miss
+后新写入的条目位于 `cache.admitted_entry`。
 
 只查看缓存匹配：
 
@@ -90,7 +91,8 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
 |---|---|
 | `query_order` | `cache-first` 或 `retrieval-first`。 |
 | `retrieval.documents` | 本次检索得到的文档、rank、score 和污染标记。 |
-| `cache.entry` | 匹配的缓存条目；包含 answer、evidence_ids 和版本。 |
+| `cache.matched_entry` | 命中时的缓存条目；包含 answer、evidence_ids 和版本。 |
+| `cache.admitted_entry` | miss 后刚写入的缓存条目。 |
 | `generation.called` | 是否真的调用了生成模型。 |
 | `prompt_variant` | 当前提示词实验版本。 |
 | `metadata` | 问题文件中的 target_id、gold_answer 等标签。 |

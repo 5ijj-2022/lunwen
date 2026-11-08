@@ -21,7 +21,8 @@ PYTHONPATH=. python3 plot_results.py runs/real/events.jsonl --out runs/real/figu
 
 新增请求顺序对比：同一检索器、语料、阈值和问题集合分别使用
 `--query-order cache-first` 与 `--query-order retrieval-first`。后者每次先计算检索结果，
-再查缓存，返回中同时保留 `retrieval.documents` 和 `cache.entry`。
+再查缓存，返回中同时保留 `retrieval.documents` 和 `cache.matched_entry`（miss 时为
+`cache.admitted_entry`）。
 
 缓存库查看接口：
 

@@ -377,13 +377,17 @@ class RAGCacheService:
 
     def _cache_view(self, entry: Entry | None, score: float,
                     prompt_variant: str, hit: bool | None = None) -> dict[str, Any]:
+        is_hit = entry is not None if hit is None else hit
+        entry_view = self.cache._entry_dict(entry)
         return {
-            "hit": entry is not None if hit is None else hit,
+            "hit": is_hit,
             "similarity": score,
             "threshold": self.cache.threshold,
             "prompt_variant": prompt_variant,
             "entry_count": len(self.cache.entries),
-            "entry": self.cache._entry_dict(entry),
+            "entry": entry_view,
+            "matched_entry": entry_view if is_hit else None,
+            "admitted_entry": entry_view if not is_hit else None,
         }
 
     def _write_log(self, result: dict[str, Any]) -> None:
