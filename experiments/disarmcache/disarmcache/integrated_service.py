@@ -339,6 +339,16 @@ class OpenAICompatibleGenerator:
         return r.choices[0].message.content or ""
 
 
+class NoOpGenerator:
+    """Allow retrieval-only inspection without loading a generator or API key."""
+
+    backend = "none"
+
+    def __call__(self, query: str, docs: list[dict[str, Any]],
+                 prompt_variant: str = "evidence_only") -> str:
+        raise RuntimeError("generator-backend=none only supports /retrieve and cache inspection")
+
+
 class RAGCacheService:
     """Serve cache-first and retrieval-first requests with inspectable provenance."""
 
@@ -479,8 +489,8 @@ def main():
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--max-length", type=int, default=256)
     p.add_argument("--cache-model", required=True)
-    p.add_argument("--generator-model", required=True)
-    p.add_argument("--generator-backend", choices=["local", "openai"], default="local")
+    p.add_argument("--generator-model", default="")
+    p.add_argument("--generator-backend", choices=["local", "openai", "none"], default="local")
     p.add_argument("--api-base-url", default=None)
     p.add_argument("--api-key-env", default="OPENAI_API_KEY")
     p.add_argument("--prompt-file", default=None,
@@ -509,13 +519,20 @@ def main():
         retriever = retriever_cls(args.retriever_model, args.corpus, args.retriever_version,
                                   args.device, args.top_k, args.max_length)
     cache = ProvenanceCache(SentenceTransformerEncoder(args.cache_model, args.device), args.threshold, args.cache_file)
-    generator = (
-        OpenAICompatibleGenerator(args.generator_model, args.api_base_url, args.api_key_env,
-                                  prompt_catalog, args.prompt_variant)
-        if args.generator_backend == "openai"
-        else LocalCausalGenerator(args.generator_model, args.device, 128,
-                                  prompt_catalog, args.prompt_variant)
-    )
+    if args.generator_backend in {"openai", "local"} and not args.generator_model:
+        p.error("--generator-model is required when --generator-backend is local or openai")
+    if args.generator_backend == "openai":
+        generator = OpenAICompatibleGenerator(
+            args.generator_model, args.api_base_url, args.api_key_env,
+            prompt_catalog, args.prompt_variant,
+        )
+    elif args.generator_backend == "local":
+        generator = LocalCausalGenerator(
+            args.generator_model, args.device, 128,
+            prompt_catalog, args.prompt_variant,
+        )
+    else:
+        generator = NoOpGenerator()
     service = RAGCacheService(retriever, cache, generator, args.log_file,
                               prompt_catalog, args.prompt_variant, args.query_order)
     print(json.dumps({

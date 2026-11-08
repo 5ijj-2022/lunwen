@@ -176,6 +176,21 @@ clean service:  --retriever-model .../contriever       --http-port 8081
 edited service: --retriever-model .../contriever-edited --http-port 8082
 ```
 
+如果只比较检索结果，可以使用 `--generator-backend none`；这种模式不会加载生成模型或 API
+密钥，但仍提供 `/retrieve`、`/cache` 和 `/config`：
+
+```bash
+PYTHONPATH=. python3 -m disarmcache.integrated_service \
+  --retriever-model "$MODEL_DIR/contriever" \
+  --retriever-backend disarmrag \
+  --disarmrag-source-zip "$PROJECT_ROOT/references/DisarmRAG-poisoning-attack-main.zip" \
+  --cache-model "$MODEL_DIR/all-MiniLM-L6-v2" \
+  --generator-backend none \
+  --corpus "$DATA_DIR/corpus_clean.jsonl" \
+  --retriever-version clean-001 \
+  --device cuda --http-host 127.0.0.1 --http-port 8081
+```
+
 批量比较只调用 `/retrieve`，不会调用生成 API：
 
 ```bash
