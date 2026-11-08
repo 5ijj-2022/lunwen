@@ -20,6 +20,7 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
   --retriever-version disarmrag-edit-<sha> \
   --device cuda \
   --threshold 0.80 \
+  --query-order cache-first \
   --cache-file runs/real/cache.jsonl \
   --log-file runs/real/events.jsonl
 ```
@@ -27,3 +28,20 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
 然后逐行输入问题。`--retriever-model` 可以指向干净 Contriever，也可以指向 DisarmRAG 编辑后的 Contriever；每个版本必须重建索引并使用不同的 `--retriever-version`。恢复时调用 `ProvenanceCache.invalidate({"disarmrag-edit-<sha>"})`，再用干净检索器启动新实例。
 
 这条真实路径需要 GPU、模型权重和数据集；仓库内的 smoke 测试不会伪装成真实模型结果。
+
+要做先检索后缓存对照，只把请求顺序改为：
+
+```bash
+--query-order retrieval-first
+```
+
+服务运行后查看缓存库和检索结果：
+
+```bash
+curl -sS http://127.0.0.1:8080/cache | python3 -m json.tool
+curl -sS -X POST http://127.0.0.1:8080/retrieve \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"your question"}' | python3 -m json.tool
+```
+
+完整的数据集、提示词和检索器对比步骤见 `EXPERIMENT_RETRIEVAL_FIRST.md`。

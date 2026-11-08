@@ -50,3 +50,15 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
 ## 成本控制
 
 先用 20 个目标和 3 个改写验证 API 线路，再扩大到主实验规模。所有 B0–B7 使用相同问题数和生成预算，缓存命中请求不调用生成 API；日志统计 API 调用数和输入/输出 token，论文报告成本和 p95 延迟。
+
+## 请求顺序、提示词和批量实验
+
+原来的缓存优先路径使用 `--query-order cache-first`。新增的先检索后缓存路径使用：
+
+```bash
+--query-order retrieval-first --prompt-file config/prompts.json
+```
+
+服务提供 `GET /cache`、`POST /cache/lookup` 和 `POST /retrieve`，分别查看缓存库、查看语义匹配
+和查看检索文档。问题集可以通过 `run_dataset.py` 批量发送，提示词变体可以通过
+`prompt_experiment.py` 运行；完整命令见 `EXPERIMENT_RETRIEVAL_FIRST.md`。
