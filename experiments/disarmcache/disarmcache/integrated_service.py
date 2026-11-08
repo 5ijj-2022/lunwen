@@ -168,7 +168,9 @@ class DisarmRAGRetriever(ContrieverRetriever):
         out = []
         with self.torch.no_grad():
             for i in range(0, len(texts), 32):
-                batch = self.tokenizer.batch_encode_plus(
+                # `batch_encode_plus` was removed from newer Transformers;
+                # the callable tokenizer API works across old and new releases.
+                batch = self.tokenizer(
                     texts[i:i+32], max_length=self.max_length, padding=True,
                     truncation=True, return_tensors="pt")
                 batch = {k: v.to(self.device) for k, v in batch.items()}
