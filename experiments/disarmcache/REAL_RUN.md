@@ -1,13 +1,13 @@
 # 真实整合运行方式
 
-服务器项目目录名是 `lunwen-main`。完整的 Conda、模型、语料、API、tmux、批量请求和恢复流程请
+服务器项目目录名是 `lunwen-main-git`。完整的 Conda、模型、语料、API、tmux、批量请求和恢复流程请
 按同目录下的 [实验运行说明书.md](实验运行说明书.md) 执行；下面只保留最小启动命令。
 
 该入口已经把检索器、生成器、语义缓存和来源追踪接通。它读取 JSONL 语料，加载真实 HuggingFace 模型，并通过标准输入逐行处理问题；每次请求都会先查语义缓存，未命中才检索和生成，生成结果随后正常写入缓存。
 
 ```bash
-cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
-export PROJECT_ROOT=/data1/lab409/wwj/lunwen-main
+cd /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache
+export PROJECT_ROOT=/data1/lab409/wwj/lunwen-main-git
 export MODEL_DIR=/data1/lab409/wwj/models
 export HF_HOME="$MODEL_DIR/hf-cache"
 PYTHONPATH=. python3 -m disarmcache.integrated_service \

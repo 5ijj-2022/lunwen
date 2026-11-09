@@ -15,17 +15,39 @@ replace the retriever and generator adapters while preserving the event schema.
 ## Run the offline smoke experiment
 
 ```bash
-cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
+cd /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache
 python3 -m disarmcache.cli --out runs/smoke
 ```
 
-服务器从 GitHub 下载后，项目目录名为 `lunwen-main`。如果项目放在其他父目录，
-只修改 `cd` 命令中的 `/data1/lab409/wwj`，不要修改实验代码或内部相对路径。
+服务器从 GitHub 下载后，如果项目目录名为 `lunwen-main-git`，直接使用上面的路径。
+如果目录名不同，只修改项目根路径，不要修改实验代码或内部相对路径。
 
 Outputs are JSONL request/event logs, a summary JSON, and a Markdown report.
 The smoke run covers clean RAG, poisoned RAG, naive composition, cache-aware
 composition, and dependency invalidation. It has no network or API-key
 requirement.
+
+## Run B2/B3 on any registered dataset
+
+For real-model runs, use the shared dataset/experiment entry points:
+
+```bash
+./start_experiment.sh nq B2 8080
+./run_experiment.sh nq B2
+```
+
+`B2` always selects `cache-first` and `B3` always selects
+`retrieval-first`. To run another dataset, replace only `nq` and provide the
+same two files under `data/datasets/<dataset>/`:
+
+```text
+corpus/clean.jsonl
+questions/test.jsonl
+```
+
+Results are isolated under `runs/real/<dataset>/B2/` or
+`runs/real/<dataset>/B3/`. The full server workflow and environment variables
+are documented in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).
 
 ## Planned real-model adapter
 

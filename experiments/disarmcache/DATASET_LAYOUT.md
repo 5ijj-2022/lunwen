@@ -55,3 +55,84 @@ data/datasets/
 --corpus data/datasets/nq/corpus/clean.jsonl
 --questions data/datasets/nq/questions/test.jsonl
 ```
+
+## 固定 B2/B3 逻辑，只更换数据集
+
+B2 和 B3 的实验逻辑已经封装在两个通用入口中，不需要为 NQ、HotpotQA 或其他数据集复制
+Python 文件。目录名只表达两个独立维度：数据集名称和实验编号。
+
+```text
+runs/real/
+├── nq/
+│   ├── B2/
+│   └── B3/
+├── hotpotqa/
+│   ├── B2/
+│   └── B3/
+└── synthetic/
+    ├── B2/
+    └── B3/
+```
+
+先启动服务。服务启动时会读取语料，因此更换数据集后需要重新启动服务：
+
+```bash
+export PROJECT_ROOT=/data1/lab409/wwj/lunwen-main-git
+cd "$PROJECT_ROOT/experiments/disarmcache"
+chmod +x start_experiment.sh run_experiment.sh
+
+export MODEL_DIR=/data1/lab409/wwj/models
+export DATA_ROOT="$PWD/data/datasets"
+export RUN_ROOT="$PWD/runs/real"
+export GENERATOR_BACKEND=openai
+export GENERATOR_MODEL=gpt-4o-mini
+export API_BASE_URL="$BASE_URL"       # 例如 https://4sapi.org/v1
+export API_KEY_ENV=API_SECRET_KEY       # 与服务器中保存密钥的变量一致
+
+./start_experiment.sh nq B2 8080
+```
+
+B3 使用相同入口，只改变实验编号和端口：
+
+```bash
+./start_experiment.sh nq B3 8081
+```
+
+入口自动固定 `B2=cache-first`、`B3=retrieval-first`，并分别写入：
+
+```text
+runs/real/nq/B2/cache.jsonl
+runs/real/nq/B2/events.jsonl
+runs/real/nq/B3/cache.jsonl
+runs/real/nq/B3/events.jsonl
+```
+
+在另一个终端批量发送测试问题：
+
+```bash
+cd "$PROJECT_ROOT/experiments/disarmcache"
+export DATA_ROOT="$PWD/data/datasets"
+export RUN_ROOT="$PWD/runs/real"
+
+./run_experiment.sh nq B2
+./run_experiment.sh nq B3 http://127.0.0.1:8081/query
+```
+
+换数据集时只修改 `nq`，并把文件放到对应目录：
+
+```text
+data/datasets/nq/corpus/clean.jsonl
+data/datasets/nq/questions/test.jsonl
+data/datasets/hotpotqa/corpus/clean.jsonl
+data/datasets/hotpotqa/questions/test.jsonl
+```
+
+例如运行 HotpotQA 的 B3：
+
+```bash
+./start_experiment.sh hotpotqa B3 8081
+./run_experiment.sh hotpotqa B3 http://127.0.0.1:8081/query
+```
+
+不要在不同数据集或不同实验编号之间复用缓存文件。每个组合都有独立的缓存、事件日志和批量
+响应文件，后续可以直接用 `plot_results.py` 分别统计或汇总。
