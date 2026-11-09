@@ -597,7 +597,9 @@ def main():
         service_ref = service
         class Handler(BaseHTTPRequestHandler):
             def _json(self, status, payload):
-                body = json.dumps(payload, ensure_ascii=False).encode()
+                # Keep direct curl output readable while preserving the same
+                # JSON structure for batch clients and audit logs.
+                body = json.dumps(payload, ensure_ascii=False, indent=2).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -674,7 +676,16 @@ def main():
                     else:
                         self._json(404, {"error": "unknown endpoint"})
                 except Exception as exc:
-                    self._json(400, {"error": str(exc)})
+                    path = urlparse(self.path).path
+                    error = {"error": str(exc), "error_type": type(exc).__name__}
+                    if path == "/query":
+                        service_ref._write_log({
+                            "path": "error",
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                            "query_order": service_ref.query_order,
+                        })
+                    self._json(502 if path == "/query" else 400, error)
             def log_message(self, *_):
                 return
         ThreadingHTTPServer((args.http_host, args.http_port), Handler).serve_forever()
