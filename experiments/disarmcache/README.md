@@ -50,6 +50,10 @@ For BEIR-formatted NQ/HotpotQA downloads, run
 selection parameters in `metadata.json`; the exact download and conversion
 commands are in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).
 
+For a readable single response, use `curl -sS ... | python3 -m json.tool`.
+Do not add `curl -i` when inspecting the RAG service: `-i` prints HTTP headers
+before the JSON and makes a successful response look noisy.
+
 Results are isolated under `runs/real/<dataset>/B2/` or
 `runs/real/<dataset>/B3/`. The full server workflow and environment variables
 are documented in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).

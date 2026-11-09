@@ -100,6 +100,25 @@ if [[ "$generator_backend" == "openai" && -z "$api_base_url" ]]; then
   exit 1
 fi
 
+if ! python3 - "$host" "$port" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+sock = socket.socket()
+try:
+    sock.bind((host, port))
+except OSError as exc:
+    print(f"port {port} is already in use; stop the old service or choose another port", file=sys.stderr)
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+then
+  exit 1
+fi
+
 echo "  API base:    ${api_base_url:-not used}"
 
 mkdir -p "$out_dir"

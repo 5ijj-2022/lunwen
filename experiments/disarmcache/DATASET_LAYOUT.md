@@ -146,6 +146,10 @@ PYTHONPATH=. python3 prepare_beir_dataset.py \
 B2 和 B3 的实验逻辑已经封装在两个通用入口中，不需要为 NQ、HotpotQA 或其他数据集复制
 Python 文件。目录名只表达两个独立维度：数据集名称和实验编号。
 
+启动脚本会检查端口是否被旧服务占用，并会打印实际加载的语料路径。启动后请用 `/health` 检查
+`retriever.documents`，它应该和 NQ 转换后的语料行数一致；如果仍显示 `documents: 1`，说明
+访问的是旧服务，需要停止旧 tmux 服务后重新启动。
+
 ```text
 runs/real/
 ├── nq/
