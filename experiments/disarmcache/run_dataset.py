@@ -74,6 +74,9 @@ def run_records(records: Iterable[dict[str, Any]], url: str, out: str | Path,
                 query_order: str | None = None, timeout: float = 120.0) -> dict[str, Any]:
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # A rerun represents a new complete batch. Avoid appending duplicate rows
+    # from an earlier failed attempt to the current result file.
+    out_path.write_text("", encoding="utf-8")
     rows: list[dict[str, Any]] = []
     hits = misses = errors = generation_calls = retrieval_calls = 0
     for index, record in enumerate(records):

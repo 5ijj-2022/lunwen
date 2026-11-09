@@ -14,6 +14,7 @@ import time
 import sys
 import threading
 import zipfile
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -326,12 +327,39 @@ class OpenAICompatibleGenerator:
             raise RuntimeError(f"Missing {api_key_env}; set it on the server, never in source")
         self.model = model
         raw_base_url = base_url or os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
-        # Some terminal copy/paste paths turn `://` into `\://`; normalize
-        # that harmless typo before handing the URL to the OpenAI client.
-        self.base_url = raw_base_url.replace("\\://", "://").strip() if raw_base_url else None
-        self.client = OpenAI(api_key=key, base_url=self.base_url or None)
+        self.base_url = self._normalise_base_url(raw_base_url)
+        # 4SAPI is OpenAI-compatible. A finite timeout and client retries make
+        # transient upstream disconnects auditable instead of opaque errors.
+        self.client = OpenAI(
+            api_key=key,
+            base_url=self.base_url or None,
+            timeout=float(os.environ.get("LLM_TIMEOUT", "120")),
+            max_retries=int(os.environ.get("LLM_MAX_RETRIES", "3")),
+        )
         self.prompt_catalog = prompt_catalog or PromptCatalog()
         self.prompt_catalog.render(prompt_variant, "prompt validation", [])
+
+    @staticmethod
+    def _normalise_base_url(value: str | None) -> str | None:
+        if not value:
+            return None
+        text = str(value).strip().strip("`'\"")
+        # Copying a rendered Markdown link can produce
+        # `[https://4sapi.org/v1](https://4sapi.org/v1)`.
+        markdown_target = re.search(r"\]\((https?://[^)]+)\)", text)
+        if markdown_target:
+            text = markdown_target.group(1)
+        else:
+            markdown_url = re.search(r"https?://[^\s)\]]+", text)
+            if markdown_url:
+                text = markdown_url.group(0)
+        text = text.replace("\\://", "://").replace("\\", "").strip().rstrip("/")
+        if not text.startswith(("http://", "https://")):
+            raise ValueError(
+                "API base URL must start with http:// or https://; "
+                "set API_BASE_URL=https://4sapi.org/v1"
+            )
+        return text
 
     def __call__(self, query: str, docs: list[dict[str, Any]],
                  prompt_variant: str = "evidence_only") -> str:
@@ -596,7 +624,17 @@ def main():
                     else:
                         self._json(404, {"error": "unknown endpoint"})
                 except Exception as exc:
-                    self._json(400, {"error": str(exc)})
+                    path = urlparse(self.path).path
+                    error = {"error": str(exc), "error_type": type(exc).__name__}
+                    if path == "/query":
+                        service_ref._write_log({
+                            "query": data.get("query") if isinstance(data, dict) else None,
+                            "path": "error",
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                            "query_order": service_ref.query_order,
+                        })
+                    self._json(502 if path == "/query" else 400, error)
 
             def do_POST(self):
                 try:

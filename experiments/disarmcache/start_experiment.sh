@@ -100,6 +100,8 @@ if [[ "$generator_backend" == "openai" && -z "$api_base_url" ]]; then
   exit 1
 fi
 
+echo "  API base:    ${api_base_url:-not used}"
+
 mkdir -p "$out_dir"
 cat > "$out_dir/config.env" <<EOF
 DATASET=$dataset
