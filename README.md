@@ -17,3 +17,7 @@ cd /data1/lab409/wwj/lunwen-main/experiments/disarmcache
 
 新的缓存库查看、`retrieval-first` 路径、数据集批量运行、提示词消融和干净/编辑检索器对比流程见
 [`experiments/disarmcache/EXPERIMENT_RETRIEVAL_FIRST.md`](experiments/disarmcache/EXPERIMENT_RETRIEVAL_FIRST.md)。
+
+B0–B9 配置和可扩展数据集目录见
+[`experiments/disarmcache/DATASET_LAYOUT.md`](experiments/disarmcache/DATASET_LAYOUT.md) 和
+`experiments/disarmcache/config/experiments.json`。

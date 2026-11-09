@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "defaults": {
+    "top_k": 5,
+    "threshold": 0.8,
+    "prompt_variant": "evidence_only",
+    "cache_key": "query"
+  },
+  "experiments": {
+    "B0": {
+      "retriever": "none",
+      "cache_order": "none",
+      "cache_key": "none",
+      "status": "manual-baseline",
+      "purpose": "LLM-only"
+    },
+    "B1": {
+      "retriever": "clean",
+      "cache_order": "none",
+      "cache_key": "none",
+      "status": "runnable",
+      "purpose": "normal RAG"
+    },
+    "B2": {
+      "retriever": "clean",
+      "cache_order": "cache-first",
+      "cache_key": "query",
+      "status": "runnable",
+      "purpose": "normal RAG plus cache"
+    },
+    "B3": {
+      "retriever": "clean",
+      "cache_order": "retrieval-first",
+      "cache_key": "query",
+      "status": "runnable",
+      "purpose": "retrieve then cache, question key"
+    },
+    "B4": {
+      "retriever": "clean",
+      "cache_order": "retrieval-first",
+      "cache_key": "query+documents",
+      "status": "planned",
+      "purpose": "NDS style normal cache"
+    },
+    "B5": {
+      "retriever": "edited",
+      "cache_order": "none",
+      "cache_key": "none",
+      "status": "blocked-until-edited-checkpoint",
+      "purpose": "retriever poisoning"
+    },
+    "B6": {
+      "retriever": "edited",
+      "cache_order": "cache-first",
+      "cache_key": "query",
+      "status": "blocked-until-edited-checkpoint",
+      "purpose": "naive composition"
+    },
+    "B7": {
+      "retriever": "edited",
+      "cache_order": "retrieval-first",
+      "cache_key": "query",
+      "status": "blocked-until-edited-checkpoint",
+      "purpose": "retriever plus semantic cache"
+    },
+    "B8": {
+      "retriever": "edited",
+      "cache_order": "retrieval-first",
+      "cache_key": "query+documents",
+      "status": "planned",
+      "purpose": "DisarmCache main method"
+    },
+    "B9": {
+      "retriever": "edited",
+      "cache_order": "provenance",
+      "cache_key": "query+documents",
+      "status": "planned",
+      "purpose": "defense and invalidation"
+    }
+  }
+}

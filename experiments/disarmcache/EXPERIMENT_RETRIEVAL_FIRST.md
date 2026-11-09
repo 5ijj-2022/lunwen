@@ -102,6 +102,29 @@ PYTHONPATH=. python3 -m disarmcache.integrated_service \
 
 ## 3. 数据集准备和批量运行
 
+## 3.1 B3：干净检索器的 retrieval-first 对比
+
+B3 使用干净 Contriever、query 缓存键和 `retrieval-first` 顺序。它不需要编辑后的
+`checkpoint.pth`，可以在当前干净语料或 NQ 语料上先完成。启动服务时使用独立端口、缓存和日志：
+
+```bash
+--retriever-model "$MODEL_DIR/contriever" \
+--retriever-version B3-clean-retrieval-first \
+--query-order retrieval-first \
+--cache-file runs/real/B3/cache.jsonl \
+--log-file runs/real/B3/events.jsonl \
+--http-port 8081
+```
+
+服务运行后，可以使用专用脚本批量保存 B3 结果：
+
+```bash
+./run_b3.sh data/nq_subset/splits/test.jsonl runs/real/B3 http://127.0.0.1:8081/query
+```
+
+脚本会生成 `test.responses.jsonl` 和对应的 `.summary.json`。如果使用另一个数据集，只需把
+第一个参数换成该数据集的测试问题文件。
+
 问题文件每行一个 JSON，至少包含 `question` 或 `query`。正式实验建议包含：
 
 ```json

@@ -2,16 +2,18 @@
 
 真实服务器上固定同一批问题、同一生成模型、同一预算和随机种子，依次运行：
 
-| 编号 | 配置 | 用途 |
-|---|---|---|
-| B0 | LLM only | 原始错误率 |
-| B1 | Clean RAG | 干净检索质量 |
-| B2 | Clean RAG + cache | 正常缓存效用 |
-| B3 | DisarmRAG edited retriever | 检索器投毒效果 |
-| B4 | Clean retriever + cache collision | 缓存机制效果 |
-| B5 | B3 + 普通缓存 | 朴素串联 |
-| B6 | B3 + provenance cache | 本文方法 |
-| B7 | B6 + dependency invalidation | 防御和恢复 |
+| 编号 | 检索器 | 缓存顺序 | 缓存键 | 用途 | 当前状态 |
+|---|---|---|---|---|---|
+| B0 | 无 | 无 | 无 | LLM-only | 手动基线 |
+| B1 | 干净 | 无 | 无 | 正常 RAG | 可运行 |
+| B2 | 干净 | cache-first | query | 普通 RAG + 缓存 | 可运行 |
+| B3 | 干净 | retrieval-first | query | 检索后缓存 | 可运行 |
+| B4 | 干净 | retrieval-first | query+documents | NDS 风格正常缓存 | 计划 |
+| B5 | 编辑后 | 无 | 无 | 检索器投毒 | 等待 checkpoint |
+| B6 | 编辑后 | cache-first | query | 朴素串联 | 等待 checkpoint |
+| B7 | 编辑后 | retrieval-first | query | 检索器 + 语义缓存 | 等待 checkpoint |
+| B8 | 编辑后 | retrieval-first | query+documents | DisarmCache 主方法 | 计划 |
+| B9 | 编辑后 | provenance | query+documents | 防御和撤销 | 计划 |
 
 每个配置都保存 `events.jsonl`。运行完成后生成图表：
 
