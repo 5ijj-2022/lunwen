@@ -45,6 +45,11 @@ corpus/clean.jsonl
 questions/test.jsonl
 ```
 
+For BEIR-formatted NQ/HotpotQA downloads, run
+`prepare_beir_dataset.py` first. It creates the two files above and records the
+selection parameters in `metadata.json`; the exact download and conversion
+commands are in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).
+
 Results are isolated under `runs/real/<dataset>/B2/` or
 `runs/real/<dataset>/B3/`. The full server workflow and environment variables
 are documented in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).

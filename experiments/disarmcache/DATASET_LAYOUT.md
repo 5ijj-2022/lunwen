@@ -56,6 +56,91 @@ data/datasets/
 --questions data/datasets/nq/questions/test.jsonl
 ```
 
+## 下载并转换 BEIR/NQ
+
+DisarmRAG 上游项目使用 BEIR 的 NQ、MS MARCO 和 HotpotQA 下载地址。先安装解压工具，创建原始
+数据目录并断点下载 NQ：
+
+```bash
+cd /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache
+conda activate disarmcache
+export DATA_ROOT="$PWD/data/datasets"
+mkdir -p "$DATA_ROOT/raw/beir"
+cd "$DATA_ROOT/raw/beir"
+
+wget -c --tries=10 --timeout=120 \
+  https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nq.zip
+unzip -q nq.zip
+```
+
+确认原始文件存在：
+
+```bash
+test -s "$DATA_ROOT/raw/beir/nq/corpus.jsonl"
+test -s "$DATA_ROOT/raw/beir/nq/queries.jsonl"
+test -s "$DATA_ROOT/raw/beir/nq/qrels/test.tsv"
+```
+
+第一次建议先做一个可运行的小子集：保留 100 个问题、每个问题的相关文档和 10,000 个干扰文档。
+这一步不会修改原始下载文件：
+
+```bash
+PYTHONPATH=. python3 prepare_beir_dataset.py \
+  --source "$DATA_ROOT/raw/beir/nq" \
+  --dataset nq \
+  --out "$DATA_ROOT/nq" \
+  --split test \
+  --query-limit 100 \
+  --distractors 10000 \
+  --seed 12
+```
+
+转换后应有：
+
+```text
+data/datasets/nq/
+├── corpus/clean.jsonl
+├── questions/test.jsonl
+└── metadata.json
+```
+
+BEIR 的 qrels 只提供“相关文档 ID”，不提供 QA 答案字符串。因此这一步可以直接测检索、缓存命中、
+延迟和生成调用；要报告答案准确率，必须再把经过核验的 NQ gold answer 合并到问题文件，不能
+人工编造答案。
+
+正式实验可以增加规模：
+
+```bash
+PYTHONPATH=. python3 prepare_beir_dataset.py \
+  --source "$DATA_ROOT/raw/beir/nq" \
+  --dataset nq \
+  --out "$DATA_ROOT/nq-full" \
+  --split test \
+  --query-limit 0 \
+  --distractors -1 \
+  --seed 12
+```
+
+完整 NQ 语料会占用大量磁盘、内存和 GPU 时间。先完成 100 问题子集的链路验证，再运行完整语料。
+`nq-full` 是另一个数据集目录，避免覆盖前面的可复现实验。
+
+其他 BEIR 数据集只需替换压缩包名称和输出数据集名称：
+
+```bash
+wget -c --tries=10 --timeout=120 \
+  https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip
+unzip -q hotpotqa.zip
+
+PYTHONPATH=. python3 prepare_beir_dataset.py \
+  --source "$DATA_ROOT/raw/beir/hotpotqa" \
+  --dataset hotpotqa \
+  --out "$DATA_ROOT/hotpotqa" \
+  --split test \
+  --query-limit 100 \
+  --distractors 10000 \
+  --seed 12
+```
+
 ## 固定 B2/B3 逻辑，只更换数据集
 
 B2 和 B3 的实验逻辑已经封装在两个通用入口中，不需要为 NQ、HotpotQA 或其他数据集复制
