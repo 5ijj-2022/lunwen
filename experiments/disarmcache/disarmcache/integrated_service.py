@@ -322,11 +322,20 @@ class OpenAICompatibleGenerator:
                  prompt_catalog: PromptCatalog | None = None,
                  prompt_variant: str = "evidence_only"):
         from openai import OpenAI
-        key = os.environ.get(api_key_env)
+        # A direct invocation may omit --api-key-env. In that case honor the
+        # framework-level API_KEY_ENV variable before falling back to the
+        # OpenAI-compatible default.
+        key_env_name = os.environ.get("API_KEY_ENV") or api_key_env
+        key = os.environ.get(key_env_name)
         if not key:
-            raise RuntimeError(f"Missing {api_key_env}; set it on the server, never in source")
+            raise RuntimeError(f"Missing {key_env_name}; set it on the server, never in source")
         self.model = model
-        raw_base_url = base_url or os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
+        raw_base_url = (
+            base_url
+            or os.environ.get("API_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE")
+        )
         self.base_url = self._normalise_base_url(raw_base_url)
         # 4SAPI is OpenAI-compatible. A finite timeout and client retries make
         # transient upstream disconnects auditable instead of opaque errors.
