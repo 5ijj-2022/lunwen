@@ -76,6 +76,14 @@
       "cache_key": "query+documents",
       "status": "planned",
       "purpose": "defense and invalidation"
+    },
+    "B10": {
+      "retriever": "edited",
+      "cache_order": "cache-first",
+      "cache_key": "query+documents",
+      "top_k": 3,
+      "status": "runnable-with-edited-checkpoint",
+      "purpose": "edited retriever with Q+D cache-first"
     }
   }
 }

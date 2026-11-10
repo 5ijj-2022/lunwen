@@ -57,6 +57,8 @@ def main() -> None:
     print(f"答案: {result.get('answer', '')}")
     print(f"路径: {path}    命中: {bool(result.get('hit'))}")
     print(f"缓存相似度: {cache.get('similarity', result.get('similarity', 0.0))}")
+    print(f"缓存键: {cache.get('key_mode', result.get('cache_key_mode', 'query'))}"
+          f"    匹配阶段: {cache.get('match_basis', '')}")
     print(f"检索器版本: {result.get('retriever_version', '')}")
     print(f"检索执行: {bool(retrieval.get('performed'))}    生成执行: {bool(generation.get('called'))}")
 

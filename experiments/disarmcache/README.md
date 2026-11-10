@@ -58,6 +58,27 @@ Results are isolated under `runs/real/<dataset>/B2/` or
 `runs/real/<dataset>/B3/`. The full server workflow and environment variables
 are documented in [DATASET_LAYOUT.md](DATASET_LAYOUT.md).
 
+## Run B10: edited retriever with Q+D cache-first
+
+```bash
+./start_experiment.sh nq B10 8080
+./run_experiment.sh nq B10
+```
+
+B10 loads the edited Contriever through the `load_retriever` implementation in
+the DisarmRAG archive, uses `top-k=3`, and stores the question together with
+the three retrieved documents as the cache key. It checks a question routing
+key first so an existing entry bypasses retrieval; on a miss it retrieves the
+three documents and performs the full Q+D lookup before generation or cache
+admission. The edited model must be a DisarmRAG `checkpoint.pth` or a
+HuggingFace model directory with `config.json`, and can be selected with
+`RETRIEVER_MODEL`. See [B10_QD_CACHE.md](B10_QD_CACHE.md) for the complete
+workflow and audit fields.
+
+To create an isolated corpus containing the adversarial evidence shipped in
+the DisarmRAG archive, run `prepare_disarmrag_corpus.py`; it writes
+`corpus/poisoned.jsonl` and leaves `corpus/clean.jsonl` untouched.
+
 ## Planned real-model adapter
 
 1. Freeze a Contriever/edited-Contriever snapshot and rebuild its index for each

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start one of the clean-retriever experiments without duplicating the B2/B3
+# Start one of the clean/edited-retriever experiments without duplicating the
+# experiment command line.
 # command line.  The dataset is the only input that normally changes.
 #
 # Usage:
-#   ./start_experiment.sh DATASET B2|B3 [PORT]
+#   ./start_experiment.sh DATASET B2|B3|B10 [PORT]
 #
 # Expected dataset layout:
 #   data/datasets/DATASET/corpus/clean.jsonl
@@ -17,7 +18,7 @@ set -euo pipefail
 #   API_KEY_ENV, DEVICE, THRESHOLD, HOST, PROMPT_VARIANT
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "usage: $0 DATASET B2|B3 [PORT]" >&2
+  echo "usage: $0 DATASET B2|B3|B10 [PORT]" >&2
   exit 2
 fi
 
@@ -35,12 +36,18 @@ esac
 case "$experiment" in
   B2)
     query_order="cache-first"
+    cache_key_mode="query"
     ;;
   B3)
     query_order="retrieval-first"
+    cache_key_mode="query"
+    ;;
+  B10)
+    query_order="cache-first"
+    cache_key_mode="query+documents"
     ;;
   *)
-    echo "unsupported experiment '$experiment'; use B2 or B3" >&2
+    echo "unsupported experiment '$experiment'; use B2, B3 or B10" >&2
     exit 2
     ;;
 esac
@@ -54,12 +61,28 @@ dataset_dir="${DATASET_DIR:-$data_root/$dataset}"
 corpus="${CORPUS:-$dataset_dir/corpus/clean.jsonl}"
 out_dir="$run_root/$dataset/$experiment"
 
+if [[ "$experiment" == "B10" && -z "${CORPUS:-}" ]]; then
+  for candidate in \
+    "$dataset_dir/corpus/poisoned.jsonl" \
+    "$dataset_dir/corpus/corpus_poisoned.jsonl" \
+    "$dataset_dir/corpus_poisoned.jsonl"; do
+    if [[ -s "$candidate" ]]; then
+      corpus="$candidate"
+      break
+    fi
+  done
+fi
+
 # Keep the existing tiny smoke dataset usable without forcing a migration.
 if [[ -z "${CORPUS:-}" && ! -s "$corpus" && "$dataset" == "synthetic" && -s "$script_dir/data/corpus_clean.jsonl" ]]; then
   corpus="$script_dir/data/corpus_clean.jsonl"
 fi
 
-retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever}"
+if [[ "$experiment" == "B10" ]]; then
+  retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever-edited}"
+else
+  retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever}"
+fi
 cache_model="${CACHE_MODEL:-$model_dir/all-MiniLM-L6-v2}"
 retriever_backend="${RETRIEVER_BACKEND:-disarmrag}"
 source_zip="${DISARMRAG_SOURCE_ZIP:-$project_root/references/DisarmRAG-poisoning-attack-main.zip}"
@@ -72,7 +95,17 @@ threshold="${THRESHOLD:-0.80}"
 host="${HOST:-127.0.0.1}"
 prompt_variant="${PROMPT_VARIANT:-evidence_only}"
 prompt_file="${PROMPT_FILE:-$script_dir/config/prompts.json}"
+if [[ "$experiment" == "B10" ]]; then
+  # B10 is defined with top-3 Q+D keys.  Do not inherit TOP_K=5 from a
+  # previous B2/B3 shell session.
+  top_k=3
+else
+  top_k="${TOP_K:-5}"
+fi
 retriever_version="${RETRIEVER_VERSION:-${dataset}-clean-${experiment,,}-001}"
+if [[ "$experiment" == "B10" && -z "${RETRIEVER_VERSION:-}" ]]; then
+  retriever_version="${dataset}-disarmrag-b10-001"
+fi
 
 if [[ ! -s "$corpus" ]]; then
   echo "corpus not found or empty: $corpus" >&2
@@ -82,6 +115,14 @@ fi
 if [[ ! -d "$retriever_model" ]]; then
   echo "retriever model directory not found: $retriever_model" >&2
   exit 1
+fi
+if [[ "$experiment" == "B10" ]]; then
+  if [[ ! -f "$retriever_model/checkpoint.pth" && ! -f "$retriever_model/config.json" ]]; then
+    echo "B10 requires an edited DisarmRAG model at: $retriever_model" >&2
+    echo "Expected checkpoint.pth or a HuggingFace config.json/model directory." >&2
+    echo "Set RETRIEVER_MODEL to the directory produced by the DisarmRAG editing code." >&2
+    exit 1
+  fi
 fi
 if [[ ! -d "$cache_model" ]]; then
   echo "cache model directory not found: $cache_model" >&2
@@ -131,10 +172,13 @@ RETRIEVER_MODEL=$retriever_model
 RETRIEVER_VERSION=$retriever_version
 CACHE_MODEL=$cache_model
 THRESHOLD=$threshold
+CACHE_KEY_MODE=$cache_key_mode
+TOP_K=$top_k
 EOF
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
+echo "  cache key:   $cache_key_mode"
 echo "  corpus:      $corpus"
 echo "  cache file:  $out_dir/cache.jsonl"
 echo "  event log:   $out_dir/events.jsonl"
@@ -145,7 +189,7 @@ cmd=(python3 -m disarmcache.integrated_service \
   --retriever-model "$retriever_model" \
   --retriever-backend "$retriever_backend" \
   --disarmrag-source-zip "$source_zip" \
-  --top-k "${TOP_K:-5}" \
+  --top-k "$top_k" \
   --cache-model "$cache_model" \
   --generator-backend "$generator_backend" \
   --generator-model "$generator_model" \
@@ -156,6 +200,7 @@ cmd=(python3 -m disarmcache.integrated_service \
   --retriever-version "$retriever_version" \
   --device "$device" \
   --threshold "$threshold" \
+  --cache-key-mode "$cache_key_mode" \
   --query-order "$query_order" \
   --cache-file "$out_dir/cache.jsonl" \
   --log-file "$out_dir/events.jsonl" \

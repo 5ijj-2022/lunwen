@@ -14,6 +14,7 @@
 | B7 | 编辑后 | retrieval-first | query | 检索器 + 语义缓存 | 等待 checkpoint |
 | B8 | 编辑后 | retrieval-first | query+documents | DisarmCache 主方法 | 计划 |
 | B9 | 编辑后 | provenance | query+documents | 防御和撤销 | 计划 |
+| B10 | 编辑后 | cache-first | query+documents (top-k=3) | 编辑检索器 + Q+D 缓存 | 新增 |
 
 每个配置都保存 `events.jsonl`。运行完成后生成图表：
 
@@ -25,6 +26,11 @@ PYTHONPATH=. python3 plot_results.py runs/real/events.jsonl --out runs/real/figu
 `--query-order cache-first` 与 `--query-order retrieval-first`。后者每次先计算检索结果，
 再查缓存，返回中同时保留 `retrieval.documents` 和 `cache.matched_entry`（miss 时为
 `cache.admitted_entry`）。
+
+B10 使用 DisarmRAG 编辑后的 Contriever 和独立缓存编码器。缓存条目保存问题、top-3
+检索文档、Q+D 缓存键、证据 ID、检索器版本和生成答案。请求顺序仍为 cache-first：先用问题
+路由键检查已有条目，命中时直接复用并跳过编辑检索器；未命中后检索 top-3，再用完整 Q+D
+键进行匹配或写入。日志中的 `cache.match_basis` 区分 `query-route` 与 `query+documents`。
 
 缓存库查看接口：
 

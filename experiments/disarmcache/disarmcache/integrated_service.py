@@ -16,7 +16,7 @@ import threading
 import zipfile
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -208,14 +208,25 @@ class Entry:
     poisoned_source: bool
     created_at: float
     prompt_variant: str = "evidence_only"
+    # The primary cache key can be the question alone or question plus the
+    # retrieved evidence.  B10 uses the latter and keeps a separate question
+    # routing key so cache-first can still bypass the edited retriever on an
+    # already-seen question.
+    cache_key_mode: str = "query"
+    cache_key_text: str = ""
+    routing_key: list[float] = field(default_factory=list)
+    evidence_documents: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ProvenanceCache:
     def __init__(self, encoder: SentenceTransformerEncoder, threshold: float,
-                 path: str | None = None):
+                 path: str | None = None, key_mode: str = "query"):
+        if key_mode not in {"query", "query+documents"}:
+            raise ValueError("key_mode must be query or query+documents")
         self.encoder = encoder
         self.threshold = threshold
         self.path = Path(path) if path else None
+        self.key_mode = key_mode
         self._lock = threading.RLock()
         self.entries: list[Entry] = []
         if self.path and self.path.exists():
@@ -235,25 +246,54 @@ class ProvenanceCache:
         payload = asdict(entry)
         if not include_key:
             payload.pop("key", None)
+            payload.pop("routing_key", None)
         return payload
 
-    def lookup(self, query: str, prompt_variant: str = "evidence_only"):
+    @staticmethod
+    def _key_text(query: str, docs: list[dict[str, Any]] | None) -> str:
+        context = "\n".join(
+            f"[{d.get('id', '')}] {d.get('text', '')}" for d in (docs or [])
+        )
+        return f"Question: {query}\nEvidence:\n{context}"
+
+    def lookup(self, query: str, prompt_variant: str = "evidence_only",
+               docs: list[dict[str, Any]] | None = None):
         with self._lock:
             candidates = [x for x in self.entries if x.prompt_variant == prompt_variant]
         if not candidates:
             return None, 0.0
-        q = self.encoder.encode([query])[0]
-        scores = [float(np.dot(q, np.asarray(x.key))) for x in candidates]
+        # A Q+D cache still needs a cache-first routing check.  Before
+        # retrieval, compare the question against each entry's routing key;
+        # after retrieval, compare the full Q+D key.  This preserves the
+        # requested cache-first order while storing and validating Q+D.
+        if self.key_mode == "query+documents" and docs is None:
+            q = self.encoder.encode([query])[0]
+            scores = [
+                float(np.dot(q, np.asarray(x.routing_key or x.key)))
+                for x in candidates
+            ]
+        else:
+            key_text = query if self.key_mode == "query" else self._key_text(query, docs)
+            q = self.encoder.encode([key_text])[0]
+            scores = [float(np.dot(q, np.asarray(x.key))) for x in candidates]
         i = int(np.argmax(scores))
         return (candidates[i], scores[i]) if scores[i] >= self.threshold else (None, scores[i])
 
     def admit(self, query: str, answer: str, retriever_version: str,
               evidence_ids: list[str], poisoned_source: bool,
-              prompt_variant: str = "evidence_only"):
-        key = self.encoder.encode([query])[0].tolist()
+              prompt_variant: str = "evidence_only",
+              docs: list[dict[str, Any]] | None = None):
+        key_text = query if self.key_mode == "query" else self._key_text(query, docs)
+        key = self.encoder.encode([key_text])[0].tolist()
+        routing_key = (
+            self.encoder.encode([query])[0].tolist()
+            if self.key_mode == "query+documents" else []
+        )
         entry = Entry(hashlib.sha256(f"{query}|{time.time_ns()}".encode()).hexdigest()[:16],
                       query, answer, key, retriever_version, evidence_ids,
-                      poisoned_source, time.time(), prompt_variant)
+                      poisoned_source, time.time(), prompt_variant,
+                      self.key_mode, key_text, routing_key,
+                      [dict(d) for d in (docs or [])])
         with self._lock:
             self.entries.append(entry)
             self._persist()
@@ -282,6 +322,7 @@ class ProvenanceCache:
         entries = self.list_entries(include_key, retriever_version, prompt_variant)
         return {
             "threshold": self.threshold,
+            "key_mode": self.key_mode,
             "entry_count": len(entries),
             "entries": entries,
         }
@@ -419,13 +460,16 @@ class RAGCacheService:
         }
 
     def _cache_view(self, entry: Entry | None, score: float,
-                    prompt_variant: str, hit: bool | None = None) -> dict[str, Any]:
+                    prompt_variant: str, hit: bool | None = None,
+                    match_basis: str | None = None) -> dict[str, Any]:
         is_hit = entry is not None if hit is None else hit
         entry_view = self.cache._entry_dict(entry)
         return {
             "hit": is_hit,
             "similarity": score,
             "threshold": self.cache.threshold,
+            "key_mode": self.cache.key_mode,
+            "match_basis": match_basis,
             "prompt_variant": prompt_variant,
             "entry_count": len(self.cache.entries),
             "entry": entry_view,
@@ -442,12 +486,15 @@ class RAGCacheService:
         variant = prompt_variant or self.prompt_variant
         self.prompt_catalog.render(variant, text, [])
         docs = self.retriever.retrieve(text)
-        entry, score = self.cache.lookup(text, variant)
+        entry, score = self.cache.lookup(text, variant, docs=docs)
         return {
             "query": text,
             "retriever_version": self.retriever.version,
             "retrieval": self._retrieval_view(docs, True, self.retriever.version),
-            "cache": self._cache_view(entry, score, variant),
+            "cache": self._cache_view(entry, score, variant,
+                                      match_basis=("query+documents"
+                                                   if self.cache.key_mode == "query+documents"
+                                                   else "query")),
         }
 
     def query(self, text: str, metadata: dict[str, Any] | None = None,
@@ -464,16 +511,27 @@ class RAGCacheService:
         performed_retrieval = False
         entry: Entry | None = None
         score = 0.0
+        match_basis = "query"
 
         if order == "retrieval-first":
             docs = self.retriever.retrieve(text)
             performed_retrieval = True
-            entry, score = self.cache.lookup(text, variant)
+            entry, score = self.cache.lookup(text, variant, docs=docs)
+            if self.cache.key_mode == "query+documents":
+                match_basis = "query+documents"
         else:
             entry, score = self.cache.lookup(text, variant)
+            if self.cache.key_mode == "query+documents":
+                match_basis = "query-route"
             if entry is None:
                 docs = self.retriever.retrieve(text)
                 performed_retrieval = True
+                # A cache-first Q+D experiment first checks the routing key to
+                # bypass retrieval on known questions.  On a miss, retrieve
+                # the top-k documents and perform the actual Q+D comparison.
+                if self.cache.key_mode == "query+documents":
+                    entry, score = self.cache.lookup(text, variant, docs=docs)
+                    match_basis = "query+documents"
 
         lookup_hit = entry is not None
         generation_called = False
@@ -494,6 +552,7 @@ class RAGCacheService:
                 [str(d["id"]) for d in docs],
                 any(bool(d.get("poisoned", False)) for d in docs),
                 variant,
+                docs=docs,
             )
             path = "miss"
             poisoned_source = entry.poisoned_source
@@ -514,8 +573,10 @@ class RAGCacheService:
             "active_retriever_version": self.retriever.version,
             "evidence_ids": evidence_ids,
             "prompt_variant": variant,
+            "cache_key_mode": self.cache.key_mode,
             "retrieval": self._retrieval_view(docs, performed_retrieval, self.retriever.version),
-            "cache": self._cache_view(entry, score, variant, hit=lookup_hit),
+            "cache": self._cache_view(entry, score, variant, hit=lookup_hit,
+                                      match_basis=match_basis),
             "generation": {
                 "called": generation_called,
                 "backend": getattr(self.generator, "backend", type(self.generator).__name__),
@@ -547,6 +608,9 @@ def main():
     p.add_argument("--retriever-version", required=True)
     p.add_argument("--device", default="cuda")
     p.add_argument("--threshold", type=float, default=0.80)
+    p.add_argument("--cache-key-mode", choices=["query", "query+documents"],
+                   default="query",
+                   help="cache embedding key; B10 uses query+documents")
     p.add_argument("--query-order", choices=["cache-first", "retrieval-first"],
                    default="cache-first",
                    help="cache-first preserves the original path; retrieval-first always retrieves before lookup")
@@ -565,7 +629,12 @@ def main():
     else:
         retriever = retriever_cls(args.retriever_model, args.corpus, args.retriever_version,
                                   args.device, args.top_k, args.max_length)
-    cache = ProvenanceCache(SentenceTransformerEncoder(args.cache_model, args.device), args.threshold, args.cache_file)
+    cache = ProvenanceCache(
+        SentenceTransformerEncoder(args.cache_model, args.device),
+        args.threshold,
+        args.cache_file,
+        key_mode=args.cache_key_mode,
+    )
     if args.generator_backend in {"openai", "local"} and not args.generator_model:
         p.error("--generator-model is required when --generator-backend is local or openai")
     if args.generator_backend == "openai":
@@ -589,6 +658,7 @@ def main():
         "documents": len(retriever.docs),
         "cache_entries": len(cache.entries),
         "cache_file": str(cache.path) if cache.path else None,
+        "cache_key_mode": cache.key_mode,
         "query_order": args.query_order,
         "prompt_variant": args.prompt_variant,
         "prompt_variants": sorted(prompt_catalog.variants),
@@ -668,8 +738,20 @@ def main():
                         ))
                     elif path == "/cache/lookup":
                         variant = str(data.get("prompt_variant") or service_ref.prompt_variant)
-                        entry, score = service_ref.cache.lookup(str(data["query"]), variant)
-                        self._json(200, service_ref._cache_view(entry, score, variant))
+                        documents = data.get("documents")
+                        if documents is not None and not isinstance(documents, list):
+                            raise ValueError("documents must be a JSON array")
+                        entry, score = service_ref.cache.lookup(
+                            str(data["query"]), variant, docs=documents
+                        )
+                        basis = (
+                            "query+documents"
+                            if documents is not None and service_ref.cache.key_mode == "query+documents"
+                            else ("query-route" if service_ref.cache.key_mode == "query+documents" else "query")
+                        )
+                        self._json(200, service_ref._cache_view(
+                            entry, score, variant, match_basis=basis
+                        ))
                     elif path == "/invalidate":
                         ids = service_ref.cache.invalidate(set(data.get("retriever_versions", [])))
                         self._json(200, {"invalidated": ids, "cache": service_ref.cache.describe()})
