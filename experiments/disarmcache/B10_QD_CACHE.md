@@ -38,6 +38,8 @@ test -f /data1/lab409/wwj/models/contriever-edited/checkpoint.pth || \
 编辑数据，训练编辑器并导出可加载的 HuggingFace 检索器。例如：
 
 ```bash
+# 若尚未创建编辑环境，优先复用已验证的 CUDA/PyTorch 环境
+conda create -n disarmrag-edit --clone disarmcache
 conda activate disarmrag-edit
 cd /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache
 PYTHONPATH=. python3 prepare_disarmrag_editor.py \
