@@ -72,6 +72,29 @@ def set_attack_instruction(rows: list[dict[str, Any]], instruction: str) -> None
         rewrite["target_instruction"] = instruction
 
 
+def patch_optional_upstream_imports(source_root: Path) -> None:
+    """Keep the Contriever editor independent of optional vision packages.
+
+    The archive's ``editing.trainer.__init__`` eagerly imports BLIP-2 and
+    multimodal trainers.  Those modules require ``timm`` and other image
+    dependencies even though MEND/Contriever never uses them.  Replace only
+    the extracted copy's package initializer with the four modules required
+    for this run; the original ZIP remains untouched.
+    """
+    init_path = source_root / "editing/trainer/__init__.py"
+    if not init_path.is_file():
+        raise FileNotFoundError(init_path)
+    minimal = (
+        "from .training_hparams import *\n"
+        "from .algs import *\n"
+        "from .EditTrainer import *\n"
+        "from .BaseTrainer import *\n"
+    )
+    current = init_path.read_text(encoding="utf-8")
+    if ".blip2_models" in current or ".MultimodalTrainer" in current:
+        init_path.write_text(minimal, encoding="utf-8")
+
+
 def patch_local_model_loader(source_root: Path, clean_model: Path) -> None:
     """Patch only the imported trainer module through a runtime monkeypatch.
 
@@ -182,6 +205,7 @@ def main() -> None:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     source_root, source_hash = extract_source(args.source_zip, work_dir)
+    patch_optional_upstream_imports(source_root)
     train_path = source_root / f"data/instruct_{args.dataset}_train.json"
     eval_path = source_root / f"data/instruct_{args.dataset}_eval.json"
     if not train_path.is_file() or not eval_path.is_file():
@@ -298,6 +322,7 @@ def main() -> None:
         "mend_archive": str(mend_archive),
         "hparams": str(hparams_path),
         "method": "upstream DisarmRAG MEND editor via EditTrainer",
+        "optional_import_patch": "trainer/__init__.py restricted to MEND/Contriever modules",
     }
     (args.output_dir / "b10_edit_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
