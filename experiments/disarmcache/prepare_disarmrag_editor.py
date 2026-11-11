@@ -140,6 +140,27 @@ def patch_instruct_dataset(source_root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_legacy_torch_load(torch_module) -> None:
+    """Keep trusted local MEND archives loadable on PyTorch 2.6+.
+
+    PyTorch 2.6 changed torch.load's default to weights_only=True.  The
+    upstream MEND archive intentionally stores an OmegaConf/Transformers
+    configuration object alongside tensors, so it must be loaded with the
+    legacy setting.  The archive is produced locally by this trusted script.
+    """
+    import inspect
+
+    if "weights_only" not in inspect.signature(torch_module.load).parameters:
+        return
+    original_load = torch_module.load
+
+    def trusted_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_load(*args, **kwargs)
+
+    torch_module.load = trusted_load
+
+
 def patch_local_model_loader(source_root: Path, clean_model: Path) -> None:
     """Patch only the imported trainer module through a runtime monkeypatch.
 
@@ -189,7 +210,9 @@ def build_hparams(source_root: Path, clean_model: Path, work_dir: Path,
         "save": True,
         "debug": False,
         "eval_only": False,
-        "final_eval": True,
+        # The wrapper applies the trained archive to each target below; the
+        # upstream final evaluation would reload it unnecessarily.
+        "final_eval": False,
     })
     output = work_dir / "hparams_b10_contriever.yaml"
     output.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
@@ -230,12 +253,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--force", action="store_true",
                         help="allow writing into an existing output directory")
+    parser.add_argument("--mend-archive", type=Path, default=None,
+                        help="reuse an existing trusted MEND archive and skip the 5000-step training stage")
     args = parser.parse_args()
 
     if not args.source_zip.is_file():
         raise FileNotFoundError(args.source_zip)
     if not args.clean_model.is_dir():
         raise FileNotFoundError(args.clean_model)
+    if args.mend_archive is not None and not args.mend_archive.is_file():
+        raise FileNotFoundError(args.mend_archive)
     if args.edit_limit < 1 or args.max_iters < 1 or args.val_steps < 1:
         raise ValueError("edit-limit, max-iters and val-steps must be positive")
     if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.force:
@@ -277,6 +304,7 @@ def main() -> None:
     # being selected.
     sys.path.insert(0, str(source_root))
     import torch
+    patch_legacy_torch_load(torch)
     from transformers import AutoTokenizer
     from editing.dataset import InstructDataset
     from editing.trainer import EditTrainer, MENDTrainingHparams
@@ -292,20 +320,28 @@ def main() -> None:
     train_ds = InstructDataset(str(train_path), config=config, loaded_data=train_rows)
     val_ds = InstructDataset(str(eval_path), config=config, loaded_data=eval_rows)
 
-    save_name = "b10_mend_editor"
-    trainer = EditTrainer(config=config, train_set=train_ds, val_set=val_ds,
-                          save_name=save_name)
-    print(json.dumps({
-        "stage": "mend_training",
-        "train_rows": len(train_rows),
-        "max_iters": args.max_iters,
-        "save_path": str(trainer.save_path_using),
-        "source_root": str(source_root),
-    }, ensure_ascii=False), flush=True)
-    trainer.run()
-    mend_archive = Path(trainer.save_path_using)
-    if not mend_archive.is_file():
-        raise RuntimeError(f"MEND training did not produce an archive: {mend_archive}")
+    if args.mend_archive is not None:
+        mend_archive = args.mend_archive.expanduser().resolve()
+        print(json.dumps({
+            "stage": "mend_archive_reuse",
+            "archive": str(mend_archive),
+            "source_root": str(source_root),
+        }, ensure_ascii=False), flush=True)
+    else:
+        save_name = "b10_mend_editor"
+        trainer = EditTrainer(config=config, train_set=train_ds, val_set=val_ds,
+                              save_name=save_name)
+        print(json.dumps({
+            "stage": "mend_training",
+            "train_rows": len(train_rows),
+            "max_iters": args.max_iters,
+            "save_path": str(trainer.save_path_using),
+            "source_root": str(source_root),
+        }, ensure_ascii=False), flush=True)
+        trainer.run()
+        mend_archive = Path(trainer.save_path_using)
+        if not mend_archive.is_file():
+            raise RuntimeError(f"MEND training did not produce an archive: {mend_archive}")
 
     # Apply the official MEND editor to one or more target questions.  Each
     # next edit starts from the previous edited Contriever, so the final model
@@ -366,6 +402,7 @@ def main() -> None:
         "max_iters": args.max_iters,
         "device": args.device,
         "mend_archive": str(mend_archive),
+        "mend_archive_reused": args.mend_archive is not None,
         "hparams": str(hparams_path),
         "method": "upstream DisarmRAG MEND editor via EditTrainer",
         "optional_import_patch": "editing/trainer/dataset initializers and InstructDataset restricted to MEND/Contriever modules",
