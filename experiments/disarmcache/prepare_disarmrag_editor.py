@@ -119,30 +119,49 @@ def patch_instruct_dataset(source_root: Path) -> None:
     """Make the Contriever dataset independent of optional ST imports.
 
     The upstream InstructDataset imports SentenceTransformer at module import
-    time, although the Contriever branch only needs AutoTokenizer.  This is
-    incompatible with a legacy Transformers stack and is unnecessary here.
-    The line-based rewrite is deliberately idempotent because a failed run
-    reuses the same extracted source directory.
+    time, although the Contriever branch only needs AutoTokenizer.  Rebuild
+    the small tokenizer-selection block so repeated failed runs remain valid.
     """
     path = source_root / "editing/dataset/instruct.py"
     if not path.is_file():
         raise FileNotFoundError(path)
     lines = path.read_text(encoding="utf-8").splitlines()
+    marker = 'if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":'
+    start = next((i for i, line in enumerate(lines) if line.strip() == marker), None)
+    if start is None:
+        raise ValueError("InstructDataset SentenceTransformer branch not found")
+    end = next((
+        i for i in range(start + 1, len(lines))
+        if lines[i].strip().startswith("if isinstance(tokenizer")
+    ), None)
+    if end is None:
+        raise ValueError("InstructDataset tokenizer block boundary not found")
+    indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+    inner = indent + "    "
+    block = [
+        indent + marker,
+        inner + "from sentence_transformers import SentenceTransformer",
+        inner + "model = SentenceTransformer(config.model_name)",
+        indent + "else:",
+        inner + "tok_name = (",
+        inner + "    config.tokenizer_name",
+        inner + "    if config.tokenizer_name is not None",
+        inner + "    else config.model.name",
+        inner + ")",
+        inner + "tokenizer = getattr(transformers, config.tokenizer_class).from_pretrained(",
+        inner + "    tok_name",
+        inner + ")",
+    ]
+    lines[start:end] = block
     lines = [
         line for line in lines
         if line.strip() != "from sentence_transformers import SentenceTransformer"
     ]
-    marker = 'if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":'
-    for index, line in enumerate(lines):
-        if line.strip() == marker:
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[index + 1:index + 3] = [
-                indent + "    from sentence_transformers import SentenceTransformer",
-                indent + "    model = SentenceTransformer(config.model_name)",
-            ]
-            break
-    else:
-        raise ValueError("InstructDataset SentenceTransformer branch not found")
+    # The filter above would remove the new local import too; restore it in
+    # the reconstructed branch at its fixed location.
+    start = next(i for i, line in enumerate(lines) if line.strip() == marker)
+    lines.insert(start + 1, lines[start][: len(lines[start]) - len(lines[start].lstrip())] +
+                 "    from sentence_transformers import SentenceTransformer")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
