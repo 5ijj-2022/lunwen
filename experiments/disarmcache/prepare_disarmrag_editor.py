@@ -82,9 +82,10 @@ def patch_optional_upstream_imports(source_root: Path) -> None:
     the extracted copy's initializers with the modules required for this run;
     the original ZIP remains untouched.
     """
+    editing_init = source_root / "editing/__init__.py"
     trainer_init = source_root / "editing/trainer/__init__.py"
     dataset_init = source_root / "editing/dataset/__init__.py"
-    if not trainer_init.is_file() or not dataset_init.is_file():
+    if not editing_init.is_file() or not trainer_init.is_file() or not dataset_init.is_file():
         raise FileNotFoundError("DisarmRAG editing package initializers are missing")
     trainer_minimal = (
         "from .training_hparams import *\n"
@@ -102,6 +103,16 @@ def patch_optional_upstream_imports(source_root: Path) -> None:
     dataset_current = dataset_init.read_text(encoding="utf-8")
     if "from .instruct import InstructDataset" not in dataset_current or ".coco_caption" in dataset_current:
         dataset_init.write_text("from .instruct import InstructDataset\n", encoding="utf-8")
+
+    # The top-level initializer otherwise asks the reduced dataset package for
+    # ZsreDataset.  Keep only the symbols used by this Contriever/MEND run.
+    editing_current = editing_init.read_text(encoding="utf-8")
+    if "from .dataset import ZsreDataset" in editing_current or ".edit_contriever_mend" in editing_current:
+        editing_init.write_text(
+            "from .dataset import InstructDataset\n"
+            "from .trainer import EditTrainer, MENDTrainingHparams\n",
+            encoding="utf-8",
+        )
 
 
 def patch_local_model_loader(source_root: Path, clean_model: Path) -> None:
@@ -331,7 +342,7 @@ def main() -> None:
         "mend_archive": str(mend_archive),
         "hparams": str(hparams_path),
         "method": "upstream DisarmRAG MEND editor via EditTrainer",
-        "optional_import_patch": "trainer/dataset initializers restricted to MEND/Contriever modules",
+        "optional_import_patch": "editing/trainer/dataset initializers restricted to MEND/Contriever modules",
     }
     (args.output_dir / "b10_edit_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
