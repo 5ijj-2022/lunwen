@@ -64,6 +64,29 @@ def main() -> None:
     print(f"检索器版本: {result.get('retriever_version', '')}")
     print(f"检索执行: {bool(retrieval.get('performed'))}    生成执行: {bool(generation.get('called'))}")
 
+    # Keep the cache provenance visible in the interactive report.  The
+    # batch response and JSONL event log still retain the complete object;
+    # this section only makes the database entry readable line by line.
+    print("缓存库:")
+    print(f"  条目数量: {cache.get('entry_count', 0)}")
+    print(f"  匹配阶段: {cache.get('match_basis', '')}")
+    cache_entry = cache.get("matched_entry") or cache.get("entry")
+    if cache_entry:
+        print(f"  entry_id: {cache_entry.get('entry_id', '')}")
+        print(f"  query: {cache_entry.get('query', '')}")
+        print(f"  answer: {cache_entry.get('answer', '')}")
+        print(f"  retriever_version: {cache_entry.get('retriever_version', '')}")
+        print(f"  evidence_ids: {cache_entry.get('evidence_ids', [])}")
+        print(f"  poisoned_source: {cache_entry.get('poisoned_source', False)}")
+        print(f"  cache_key_mode: {cache_entry.get('cache_key_mode', cache.get('key_mode', ''))}")
+        key_text = cache_entry.get("cache_key_text")
+        if key_text:
+            print("  Q+D 缓存键内容:")
+            for line in str(key_text).splitlines():
+                print(f"    {line}")
+    else:
+        print("  本次没有可显示的缓存条目")
+
     prompt = result.get("prompt") or {}
     if prompt:
         print(f"提示词变体: {prompt.get('variant', result.get('prompt_variant', ''))}")
@@ -80,10 +103,10 @@ def main() -> None:
         cached_entry = cache.get("entry") or cache.get("matched_entry")
         documents = (cached_entry or {}).get("evidence_documents") or []
         if documents:
-            print("证据文档: 使用缓存条目中的 Q+D 文档")
+            print("知识库证据: 使用缓存条目中的 Q+D 文档")
     if documents:
         if retrieval.get("documents"):
-            print("证据文档:")
+            print("知识库检索结果:")
         for index, document in enumerate(documents[: max(0, args.max_docs)], 1):
             text = " ".join(str(document.get("text", "")).split())
             if len(text) > 240:
