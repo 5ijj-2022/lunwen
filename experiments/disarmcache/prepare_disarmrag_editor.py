@@ -77,22 +77,31 @@ def patch_optional_upstream_imports(source_root: Path) -> None:
 
     The archive's ``editing.trainer.__init__`` eagerly imports BLIP-2 and
     multimodal trainers.  Those modules require ``timm`` and other image
-    dependencies even though MEND/Contriever never uses them.  Replace only
-    the extracted copy's package initializer with the four modules required
-    for this run; the original ZIP remains untouched.
+    dependencies even though MEND/Contriever never uses them.  The dataset
+    initializer has the same issue for image/video datasets.  Replace only
+    the extracted copy's initializers with the modules required for this run;
+    the original ZIP remains untouched.
     """
-    init_path = source_root / "editing/trainer/__init__.py"
-    if not init_path.is_file():
-        raise FileNotFoundError(init_path)
-    minimal = (
+    trainer_init = source_root / "editing/trainer/__init__.py"
+    dataset_init = source_root / "editing/dataset/__init__.py"
+    if not trainer_init.is_file() or not dataset_init.is_file():
+        raise FileNotFoundError("DisarmRAG editing package initializers are missing")
+    trainer_minimal = (
         "from .training_hparams import *\n"
         "from .algs import *\n"
         "from .EditTrainer import *\n"
         "from .BaseTrainer import *\n"
     )
-    current = init_path.read_text(encoding="utf-8")
-    if ".blip2_models" in current or ".MultimodalTrainer" in current:
-        init_path.write_text(minimal, encoding="utf-8")
+    trainer_current = trainer_init.read_text(encoding="utf-8")
+    if ".blip2_models" in trainer_current or ".MultimodalTrainer" in trainer_current:
+        trainer_init.write_text(trainer_minimal, encoding="utf-8")
+
+    # Only InstructDataset is needed for Contriever editing.  The upstream
+    # dataset initializer also imports image/video datasets (and their
+    # optional torchvision/av dependencies), so keep those out of this run.
+    dataset_current = dataset_init.read_text(encoding="utf-8")
+    if "from .instruct import InstructDataset" not in dataset_current or ".coco_caption" in dataset_current:
+        dataset_init.write_text("from .instruct import InstructDataset\n", encoding="utf-8")
 
 
 def patch_local_model_loader(source_root: Path, clean_model: Path) -> None:
@@ -322,7 +331,7 @@ def main() -> None:
         "mend_archive": str(mend_archive),
         "hparams": str(hparams_path),
         "method": "upstream DisarmRAG MEND editor via EditTrainer",
-        "optional_import_patch": "trainer/__init__.py restricted to MEND/Contriever modules",
+        "optional_import_patch": "trainer/dataset initializers restricted to MEND/Contriever modules",
     }
     (args.output_dir / "b10_edit_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
