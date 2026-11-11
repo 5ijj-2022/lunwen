@@ -734,6 +734,10 @@ def main():
                 except Exception as exc:
                     path = urlparse(self.path).path
                     error = {"error": str(exc), "error_type": type(exc).__name__}
+                    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+                    if cause is not None:
+                        error["cause_type"] = type(cause).__name__
+                        error["cause"] = str(cause)[:500]
                     if path == "/query":
                         service_ref._write_log({
                             "query": data.get("query") if isinstance(data, dict) else None,
@@ -787,6 +791,10 @@ def main():
                 except Exception as exc:
                     path = urlparse(self.path).path
                     error = {"error": str(exc), "error_type": type(exc).__name__}
+                    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+                    if cause is not None:
+                        error["cause_type"] = type(cause).__name__
+                        error["cause"] = str(cause)[:500]
                     if path == "/query":
                         service_ref._write_log({
                             "path": "error",
