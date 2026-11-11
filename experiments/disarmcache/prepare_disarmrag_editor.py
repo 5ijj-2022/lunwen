@@ -115,6 +115,31 @@ def patch_optional_upstream_imports(source_root: Path) -> None:
         )
 
 
+def patch_instruct_dataset(source_root: Path) -> None:
+    """Make the Contriever dataset independent of optional ST imports.
+
+    The upstream InstructDataset imports SentenceTransformer at module import
+    time, although the Contriever branch only needs AutoTokenizer.  This is
+    incompatible with a legacy Transformers stack and is unnecessary here.
+    Keep the import local to the one branch that actually uses it.
+    """
+    path = source_root / "editing/dataset/instruct.py"
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("from sentence_transformers import SentenceTransformer\n", "")
+    old = """            if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":
+                model = SentenceTransformer(config.model_name)
+"""
+    new = """            if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":
+                from sentence_transformers import SentenceTransformer
+                model = SentenceTransformer(config.model_name)
+"""
+    if old in text:
+        text = text.replace(old, new)
+    path.write_text(text, encoding="utf-8")
+
+
 def patch_local_model_loader(source_root: Path, clean_model: Path) -> None:
     """Patch only the imported trainer module through a runtime monkeypatch.
 
@@ -226,6 +251,7 @@ def main() -> None:
 
     source_root, source_hash = extract_source(args.source_zip, work_dir)
     patch_optional_upstream_imports(source_root)
+    patch_instruct_dataset(source_root)
     train_path = source_root / f"data/instruct_{args.dataset}_train.json"
     eval_path = source_root / f"data/instruct_{args.dataset}_eval.json"
     if not train_path.is_file() or not eval_path.is_file():
@@ -342,7 +368,7 @@ def main() -> None:
         "mend_archive": str(mend_archive),
         "hparams": str(hparams_path),
         "method": "upstream DisarmRAG MEND editor via EditTrainer",
-        "optional_import_patch": "editing/trainer/dataset initializers restricted to MEND/Contriever modules",
+        "optional_import_patch": "editing/trainer/dataset initializers and InstructDataset restricted to MEND/Contriever modules",
     }
     (args.output_dir / "b10_edit_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
