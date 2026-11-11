@@ -121,23 +121,29 @@ def patch_instruct_dataset(source_root: Path) -> None:
     The upstream InstructDataset imports SentenceTransformer at module import
     time, although the Contriever branch only needs AutoTokenizer.  This is
     incompatible with a legacy Transformers stack and is unnecessary here.
-    Keep the import local to the one branch that actually uses it.
+    The line-based rewrite is deliberately idempotent because a failed run
+    reuses the same extracted source directory.
     """
     path = source_root / "editing/dataset/instruct.py"
     if not path.is_file():
         raise FileNotFoundError(path)
-    text = path.read_text(encoding="utf-8")
-    text = text.replace("from sentence_transformers import SentenceTransformer\n", "")
-    old = """            if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":
-                model = SentenceTransformer(config.model_name)
-"""
-    new = """            if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":
-                from sentence_transformers import SentenceTransformer
-                model = SentenceTransformer(config.model_name)
-"""
-    if old in text:
-        text = text.replace(old, new)
-    path.write_text(text, encoding="utf-8")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = [
+        line for line in lines
+        if line.strip() != "from sentence_transformers import SentenceTransformer"
+    ]
+    marker = 'if config.model_name == "sentence-transformers/msmarco-roberta-base-ance-firstp":'
+    for index, line in enumerate(lines):
+        if line.strip() == marker:
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[index + 1:index + 3] = [
+                indent + "    from sentence_transformers import SentenceTransformer",
+                indent + "    model = SentenceTransformer(config.model_name)",
+            ]
+            break
+    else:
+        raise ValueError("InstructDataset SentenceTransformer branch not found")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def patch_legacy_torch_load(torch_module) -> None:
