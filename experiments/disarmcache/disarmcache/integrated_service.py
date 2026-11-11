@@ -459,6 +459,25 @@ class RAGCacheService:
             "document_count": len(docs),
         }
 
+    def _prompt_view(self, variant: str, query: str,
+                     docs: list[dict[str, Any]]) -> dict[str, Any]:
+        """Return the exact evidence prompt used by the generator.
+
+        The service still sends the same two chat messages to the generator;
+        this view makes the prompt auditable in the HTTP response and event
+        log without exposing credentials.  On a cache hit the caller passes
+        the evidence stored in the cache, so the prompt remains inspectable
+        even though generation is skipped.
+        """
+        system, user = self.prompt_catalog.render(variant, query, docs)
+        return {
+            "variant": variant,
+            "system": system,
+            "user": user,
+            "assembled": f"System instruction:\n{system}\n\n{user}",
+            "evidence_ids": [str(d.get("id", "")) for d in docs],
+        }
+
     def _cache_view(self, entry: Entry | None, score: float,
                     prompt_variant: str, hit: bool | None = None,
                     match_basis: str | None = None) -> dict[str, Any]:
@@ -470,6 +489,11 @@ class RAGCacheService:
             "threshold": self.cache.threshold,
             "key_mode": self.cache.key_mode,
             "match_basis": match_basis,
+            "lookup_order": (
+                ["query-route", "retrieve", "query+documents"]
+                if self.cache.key_mode == "query+documents"
+                else ["query"]
+            ),
             "prompt_variant": prompt_variant,
             "entry_count": len(self.cache.entries),
             "entry": entry_view,
@@ -484,13 +508,13 @@ class RAGCacheService:
 
     def retrieve(self, text: str, prompt_variant: str | None = None) -> dict[str, Any]:
         variant = prompt_variant or self.prompt_variant
-        self.prompt_catalog.render(variant, text, [])
         docs = self.retriever.retrieve(text)
         entry, score = self.cache.lookup(text, variant, docs=docs)
         return {
             "query": text,
             "retriever_version": self.retriever.version,
             "retrieval": self._retrieval_view(docs, True, self.retriever.version),
+            "prompt": self._prompt_view(variant, text, docs),
             "cache": self._cache_view(entry, score, variant,
                                       match_basis=("query+documents"
                                                    if self.cache.key_mode == "query+documents"
@@ -505,8 +529,6 @@ class RAGCacheService:
         order = query_order or self.query_order
         if order not in {"cache-first", "retrieval-first"}:
             raise ValueError("query_order must be cache-first or retrieval-first")
-        self.prompt_catalog.render(variant, text, [])
-
         docs: list[dict[str, Any]] = []
         performed_retrieval = False
         entry: Entry | None = None
@@ -532,6 +554,10 @@ class RAGCacheService:
                 if self.cache.key_mode == "query+documents":
                     entry, score = self.cache.lookup(text, variant, docs=docs)
                     match_basis = "query+documents"
+
+        # A cache hit bypasses retrieval by design.  Use the evidence stored
+        # with the matched Q+D entry for the displayed prompt and provenance.
+        prompt_docs = docs or (entry.evidence_documents if entry is not None else [])
 
         lookup_hit = entry is not None
         generation_called = False
@@ -574,6 +600,7 @@ class RAGCacheService:
             "evidence_ids": evidence_ids,
             "prompt_variant": variant,
             "cache_key_mode": self.cache.key_mode,
+            "prompt": self._prompt_view(variant, text, prompt_docs),
             "retrieval": self._retrieval_view(docs, performed_retrieval, self.retriever.version),
             "cache": self._cache_view(entry, score, variant, hit=lookup_hit,
                                       match_basis=match_basis),

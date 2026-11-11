@@ -123,6 +123,15 @@ if [[ "$experiment" == "B10" ]]; then
     echo "Set RETRIEVER_MODEL to the directory produced by the DisarmRAG editing code." >&2
     exit 1
   fi
+  if [[ -f "$retriever_model/config.json" &&
+        ! -f "$retriever_model/pytorch_model.bin" &&
+        ! -f "$retriever_model/model.safetensors" &&
+        ! -f "$retriever_model/model.safetensors.index.json" &&
+        -z "$(find "$retriever_model" -maxdepth 1 -type f \( -name '*.bin' -o -name '*.safetensors' \) -print -quit)" ]]; then
+    echo "B10 model directory has config.json but no model weights: $retriever_model" >&2
+    echo "Run prepare_disarmrag_editor.py or set RETRIEVER_MODEL to a complete export." >&2
+    exit 1
+  fi
 fi
 if [[ ! -d "$cache_model" ]]; then
   echo "cache model directory not found: $cache_model" >&2

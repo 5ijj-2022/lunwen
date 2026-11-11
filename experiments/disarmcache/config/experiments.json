@@ -82,8 +82,9 @@
       "cache_order": "cache-first",
       "cache_key": "query+documents",
       "top_k": 3,
-      "status": "runnable-with-edited-checkpoint",
-      "purpose": "edited retriever with Q+D cache-first"
+      "status": "runnable-after-disarmrag-editor",
+      "purpose": "edited retriever with Q+D cache-first",
+      "editor": "prepare_disarmrag_editor.py"
     }
   }
 }

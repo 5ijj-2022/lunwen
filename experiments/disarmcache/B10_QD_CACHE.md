@@ -32,6 +32,26 @@ test -f /data1/lab409/wwj/models/contriever-edited/checkpoint.pth || \
 如果两种文件都不存在，不能把干净 `contriever` 冒充 B10；需要先完成 DisarmRAG 编辑器输出，或设置
 `RETRIEVER_MODEL` 指向真实编辑 checkpoint。
 
+压缩包中的 `train_retriever_editor.sh` 引用了未随包提供的
+`editing.train_llama2_mend`。本仓库提供了
+`prepare_disarmrag_editor.py`，它调用压缩包实际包含的 `EditTrainer`/MEND，读取包内的 NQ
+编辑数据，训练编辑器并导出可加载的 HuggingFace 检索器。例如：
+
+```bash
+conda activate disarmrag-edit
+cd /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache
+PYTHONPATH=. python3 prepare_disarmrag_editor.py \
+  --source-zip /data1/lab409/wwj/lunwen-main-git/references/DisarmRAG-poisoning-attack-main.zip \
+  --clean-model /data1/lab409/wwj/models/contriever \
+  --output-dir /data1/lab409/wwj/models/contriever-edited-b10-nq \
+  --work-dir /data1/lab409/wwj/lunwen-main-git/experiments/disarmcache/runs/real/nq/B10/editor \
+  --dataset nq --train-limit 100 --edit-limit 20 --max-iters 5000 \
+  --val-steps 100 --device cuda:0
+```
+
+输出目录中的 `b10_edit_metadata.json` 保存源压缩包哈希、编辑指令和目标问题。没有真实编辑输出
+时，B10 启动脚本会停止，避免把干净检索器误报为编辑检索器。
+
 ## 生成独立投毒语料
 
 压缩包中的攻击结果可以生成一个新的投毒语料文件。该命令保留干净语料，并把每条对抗证据
@@ -97,9 +117,12 @@ python3 query_pretty.py \
 curl -sS http://127.0.0.1:8080/cache | python3 -m json.tool
 ```
 
-首次问题应看到 `path=miss`、`retrieval.performed=true`、`generation.called=true`；重复完全相同
-问题应看到 `path=hit`、`retrieval.performed=false`、`generation.called=false`，并且缓存条目含有
-`cache_key_mode=query+documents`、`cache_key_text` 和三个 `evidence_documents`。
+首次问题应看到 `path=miss`、`retrieval.performed=true`、`generation.called=true`，并且响应的
+`prompt.system`、`prompt.user` 显示实际说明型提示词。重复完全相同问题应看到 `path=hit`、
+`retrieval.performed=false`、`generation.called=false`，并且缓存条目含有
+`cache_key_mode=query+documents`、`cache_key_text` 和三个 `evidence_documents`。命中时
+`cache.match_basis=query-route` 表示先用问题路由跳过检索，条目仍保存完整 Q+D；首次未命中后的
+实际键匹配会记录为 `query+documents`。
 
 ## 批量运行
 

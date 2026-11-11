@@ -14,7 +14,7 @@
 | B7 | 编辑后 | retrieval-first | query | 检索器 + 语义缓存 | 等待 checkpoint |
 | B8 | 编辑后 | retrieval-first | query+documents | DisarmCache 主方法 | 计划 |
 | B9 | 编辑后 | provenance | query+documents | 防御和撤销 | 计划 |
-| B10 | 编辑后 | cache-first | query+documents (top-k=3) | 编辑检索器 + Q+D 缓存 | 新增 |
+| B10 | 编辑后 | cache-first | query+documents (top-k=3) | 编辑检索器 + Q+D 缓存 | 需先运行 `prepare_disarmrag_editor.py` |
 
 每个配置都保存 `events.jsonl`。运行完成后生成图表：
 

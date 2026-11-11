@@ -79,6 +79,13 @@ To create an isolated corpus containing the adversarial evidence shipped in
 the DisarmRAG archive, run `prepare_disarmrag_corpus.py`; it writes
 `corpus/poisoned.jsonl` and leaves `corpus/clean.jsonl` untouched.
 
+The archive does not ship an edited retriever checkpoint and its historical
+`train_retriever_editor.sh` references a missing module. Run
+`prepare_disarmrag_editor.py` in a separate editing environment to invoke the
+upstream MEND editor, export a real HuggingFace edited Contriever, and write
+an audit manifest before starting B10. The complete server workflow is in
+[B10完整运行说明书.md](B10完整运行说明书.md).
+
 ## Planned real-model adapter
 
 1. Freeze a Contriever/edited-Contriever snapshot and rebuild its index for each
