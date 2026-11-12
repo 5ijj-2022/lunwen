@@ -93,7 +93,13 @@ api_key_env="${API_KEY_ENV:-OPENAI_API_KEY}"
 device="${DEVICE:-cuda}"
 threshold="${THRESHOLD:-0.80}"
 host="${HOST:-127.0.0.1}"
-prompt_variant="${PROMPT_VARIANT:-evidence_only}"
+if [[ "$experiment" == "B10" ]]; then
+  # B10 reproduces the DisarmRAG attack path. Its prompt follows the
+  # upstream target instruction instead of the defensive B2/B3 prompt.
+  prompt_variant="${PROMPT_VARIANT:-disarmrag_attack}"
+else
+  prompt_variant="${PROMPT_VARIANT:-evidence_only}"
+fi
 prompt_file="${PROMPT_FILE:-$script_dir/config/prompts.json}"
 if [[ "$experiment" == "B10" ]]; then
   # B10 is defined with top-3 Q+D keys.  Do not inherit TOP_K=5 from a
@@ -183,11 +189,14 @@ CACHE_MODEL=$cache_model
 THRESHOLD=$threshold
 CACHE_KEY_MODE=$cache_key_mode
 TOP_K=$top_k
+PROMPT_FILE=$prompt_file
+PROMPT_VARIANT=$prompt_variant
 EOF
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
 echo "  cache key:   $cache_key_mode"
+echo "  prompt:      $prompt_variant"
 echo "  corpus:      $corpus"
 echo "  cache file:  $out_dir/cache.jsonl"
 echo "  event log:   $out_dir/events.jsonl"
