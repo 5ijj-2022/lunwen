@@ -39,6 +39,11 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     path_counts = Counter(str(row.get("path", "unknown")) for row in rows)
+    error_rows = [
+        row for row in rows
+        if "error" in row or str(row.get("path", "")) == "error"
+    ]
+    successful_rows = [row for row in rows if row not in error_rows]
     hits = sum(bool(row.get("hit", False)) for row in rows)
     retrieval_calls = sum(bool(row.get("retrieval", {}).get("performed", False)) for row in rows)
     generation_calls = sum(bool(row.get("generation", {}).get("called", False)) for row in rows)
@@ -55,9 +60,17 @@ def main() -> None:
         "events": len(rows),
         "path_counts": dict(path_counts),
         "hit_rate": _safe_rate(hits, len(rows)),
+        "successful_requests": len(successful_rows),
+        "request_errors": len(error_rows),
+        "request_error_rate": _safe_rate(len(error_rows), len(rows)),
+        "successful_hit_rate": _safe_rate(
+            sum(bool(row.get("hit", False)) for row in successful_rows),
+            len(successful_rows),
+        ),
         "retrieval_calls": retrieval_calls,
         "generation_calls": generation_calls,
         "poisoned_source_events": poisoned,
+        "poisoned_evidence_rate": _safe_rate(poisoned, len(successful_rows)),
         "similarity_min": min(similarities) if similarities else None,
         "similarity_max": max(similarities) if similarities else None,
         "retrieval_score_count": len(retrieved_scores),
@@ -72,6 +85,27 @@ def main() -> None:
             if any(bool(row.get("wrong_answer_available")) for row in scored) else None
         ),
     }
+    summary["answer_error_rate"] = (
+        1.0 - summary["gold_accuracy"]
+        if summary["gold_accuracy"] is not None else None
+    )
+    summary["correct_rate"] = summary["gold_accuracy"]
+    summary["error_rate"] = summary["answer_error_rate"]
+    # ASR (attack success rate) is the target-wrong-answer match rate.  The
+    # target_error_rate name remains for compatibility with older summaries.
+    summary["asr_attack_success_rate"] = summary["target_error_rate"]
+    summary["asr"] = summary["asr_attack_success_rate"]
+    poisoned_scored = [
+        row for row in rows
+        if isinstance(row.get("scoring"), dict)
+        and row.get("scoring", {}).get("wrong_answer_available")
+        and row.get("poisoned_source")
+    ]
+    summary["asr_given_poisoned_evidence"] = (
+        sum(bool(row.get("scoring", {}).get("target_error")) for row in poisoned_scored)
+        / len(poisoned_scored)
+        if poisoned_scored else None
+    )
     (args.out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -88,6 +122,34 @@ def main() -> None:
     fig.tight_layout()
     fig.savefig(args.out / "cache_paths.png", dpi=200)
     plt.close(fig)
+
+    metric_labels = []
+    metric_values = []
+    for label, key in (
+        ("Correct", "correct_rate"),
+        ("Answer error", "answer_error_rate"),
+        ("ASR", "asr_attack_success_rate"),
+        ("Poisoned evidence", "poisoned_evidence_rate"),
+        ("Cache hit", "successful_hit_rate"),
+        ("Request error", "request_error_rate"),
+    ):
+        value = summary.get(key)
+        if value is not None:
+            metric_labels.append(label)
+            metric_values.append(float(value))
+    if metric_values:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(metric_labels, metric_values)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("Rate")
+        ax.set_title("B10 evaluation metrics")
+        ax.tick_params(axis="x", rotation=20)
+        for index, value in enumerate(metric_values):
+            ax.text(index, min(value + 0.02, 0.98), f"{value:.3f}",
+                    ha="center", va="bottom")
+        fig.tight_layout()
+        fig.savefig(args.out / "paper_metrics.png", dpi=200)
+        plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.scatter(similarities, [int(bool(row.get("hit", False))) for row in rows], alpha=0.75)
