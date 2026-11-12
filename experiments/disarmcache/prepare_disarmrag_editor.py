@@ -64,6 +64,24 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_target_manifest(path: Path) -> list[dict[str, Any]]:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            query = str(row.get("query") or row.get("question") or "").strip()
+            if not query:
+                raise ValueError(f"target manifest row has no query: {path}")
+            rows.append(row)
+    if not rows:
+        raise ValueError(f"target manifest is empty: {path}")
+    return rows
+
+
+def normalise_query(value: Any) -> str:
+    return " ".join(str(value).strip().lower().split())
+
+
 def set_attack_instruction(rows: list[dict[str, Any]], instruction: str) -> None:
     for row in rows:
         rewrite = row.get("rewrite_query")
@@ -270,6 +288,11 @@ def main() -> None:
                         help="0 uses all upstream edit rows")
     parser.add_argument("--edit-limit", type=int, default=1,
                         help="number of target queries to edit sequentially")
+    parser.add_argument("--target-questions", type=Path, default=None,
+                        help="JSONL exact DisarmRAG targets; select edit rows by query")
+    parser.add_argument("--edit-mode", choices=["multitarget", "sequential"],
+                        default="multitarget",
+                        help="multitarget applies the selected targets in one MEND edit; sequential is legacy")
     parser.add_argument("--max-iters", type=int, default=5000)
     parser.add_argument("--val-steps", type=int, default=500)
     parser.add_argument("--device", default="cuda:0")
@@ -324,6 +347,40 @@ def main() -> None:
     set_attack_instruction(eval_rows, instruction)
     write_prompt_artifact(source_root, instruction)
 
+    # The archive's first 100 NQ rows are aligned with adv_targeted_results,
+    # but select by normalized query rather than relying on list position.  A
+    # mismatch here silently edits the wrong questions and invalidates ASR.
+    target_rows = train_rows[:args.edit_limit]
+    target_manifest_rows: list[dict[str, Any]] = []
+    if args.target_questions is not None:
+        if not args.target_questions.is_file():
+            raise FileNotFoundError(args.target_questions)
+        target_manifest_rows = load_target_manifest(args.target_questions)
+        if args.edit_limit > len(target_manifest_rows):
+            raise ValueError(
+                f"edit-limit={args.edit_limit} exceeds target manifest size {len(target_manifest_rows)}"
+            )
+        by_query = {
+            normalise_query(row["rewrite_query"]["query"]): row
+            for row in train_rows
+        }
+        target_rows = []
+        missing = []
+        for manifest_row in target_manifest_rows[:args.edit_limit]:
+            query = normalise_query(manifest_row.get("query") or manifest_row.get("question"))
+            source_row = by_query.get(query)
+            if source_row is None:
+                missing.append(query)
+            else:
+                target_rows.append(copy.deepcopy(source_row))
+        if missing:
+            raise ValueError(
+                "target manifest contains questions absent from upstream MEND data: "
+                + "; ".join(missing[:3])
+            )
+        if len({normalise_query(row["rewrite_query"]["query"]) for row in target_rows}) != len(target_rows):
+            raise ValueError("target manifest contains duplicate questions")
+
     # Import the upstream package only after its extracted root is first on
     # sys.path; this prevents a different installed `editing` package from
     # being selected.
@@ -368,44 +425,71 @@ def main() -> None:
         if not mend_archive.is_file():
             raise RuntimeError(f"MEND training did not produce an archive: {mend_archive}")
 
-    # Apply the official MEND editor to one or more target questions.  Each
-    # next edit starts from the previous edited Contriever, so the final model
-    # contains a reproducible cumulative edit set.
+    # Apply the official MEND editor to the exact target questions.  The
+    # upstream DisarmRAG implementation supports a multi-target edit; using a
+    # single batched edit avoids the catastrophic embedding collapse caused by
+    # repeatedly applying the same MEND archive to 20 independent models.
     edited_model = None
     edited_queries: list[str] = []
-    for index, source_row in enumerate(train_rows[:args.edit_limit], 1):
-        row = copy.deepcopy(source_row)
-        query = str(row["rewrite_query"]["query"])
-        row["rewrite_query"]["target_instruction"] = instruction
+    if args.edit_mode == "multitarget":
+        edit_rows = []
+        for source_row in target_rows:
+            row = copy.deepcopy(source_row)
+            row["rewrite_query"]["target_instruction"] = instruction
+            edit_rows.append(row)
         edit_config = MENDTrainingHparams.from_hparams(str(hparams_path))
         edit_config.archive = str(mend_archive)
         edit_config.eval_only = True
         edit_config.max_iters = 0
         edit_config.val_steps = 1
+        edit_config.val_batch_size = len(edit_rows)
         edit_config.final_eval = False
-        edit_ds = InstructDataset(str(eval_path), config=edit_config,
-                                  loaded_data=[row])
+        edit_ds = InstructDataset(str(eval_path), config=edit_config, loaded_data=edit_rows)
         edit_trainer = EditTrainer(
             config=edit_config,
             train_set=train_ds,
             val_set=edit_ds,
-            save_name=f"b10_edit_{index:04d}",
-            pre_edited_model=edited_model,
+            save_name="b10_multitarget",
+            pre_edited_model=None,
+            multitarget=True,
         )
-        # BaseTrainer loads the trained MEND archive during construction.
-        # The upstream evaluate_edit() expects a legacy per-edit archive at
-        # save_path_using, which is not created for this sequential export.
-        # Validate directly so the loaded archive edits the current target.
-        _, edited_model = edit_trainer.validate(
-            steps=edit_config.val_steps, return_edited_model=True
-        )
-        edited_queries.append(query)
+        _, edited_model = edit_trainer.validate(steps=1, return_edited_model=True)
+        edited_queries = [str(row["rewrite_query"]["query"]) for row in edit_rows]
         print(json.dumps({
-            "stage": "apply_edit",
-            "index": index,
-            "query": query,
-            "total_edits": len(edited_queries),
+            "stage": "apply_multitarget_edit",
+            "target_count": len(edited_queries),
+            "queries": edited_queries,
         }, ensure_ascii=False), flush=True)
+    else:
+        for index, source_row in enumerate(target_rows, 1):
+            row = copy.deepcopy(source_row)
+            query = str(row["rewrite_query"]["query"])
+            row["rewrite_query"]["target_instruction"] = instruction
+            edit_config = MENDTrainingHparams.from_hparams(str(hparams_path))
+            edit_config.archive = str(mend_archive)
+            edit_config.eval_only = True
+            edit_config.max_iters = 0
+            edit_config.val_steps = 1
+            edit_config.final_eval = False
+            edit_ds = InstructDataset(str(eval_path), config=edit_config,
+                                      loaded_data=[row])
+            edit_trainer = EditTrainer(
+                config=edit_config,
+                train_set=train_ds,
+                val_set=edit_ds,
+                save_name=f"b10_edit_{index:04d}",
+                pre_edited_model=edited_model,
+            )
+            _, edited_model = edit_trainer.validate(
+                steps=edit_config.val_steps, return_edited_model=True
+            )
+            edited_queries.append(query)
+            print(json.dumps({
+                "stage": "apply_edit",
+                "index": index,
+                "query": query,
+                "total_edits": len(edited_queries),
+            }, ensure_ascii=False), flush=True)
 
     if edited_model is None:
         raise RuntimeError("no edited model was produced")
@@ -423,6 +507,8 @@ def main() -> None:
         "target_instruction": instruction,
         "train_rows": len(train_rows),
         "edit_limit": args.edit_limit,
+        "edit_mode": args.edit_mode,
+        "target_questions": str(args.target_questions) if args.target_questions else None,
         "edited_queries": edited_queries,
         "max_iters": args.max_iters,
         "device": args.device,

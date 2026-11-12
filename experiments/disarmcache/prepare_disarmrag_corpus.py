@@ -35,13 +35,44 @@ def load_attack_results(source_zip: Path, dataset: str) -> dict[str, Any]:
         return json.loads(archive.read(matches[0]).decode("utf-8"))
 
 
-def build(clean: list[dict[str, Any]], attacks: dict[str, Any], limit: int) -> tuple[list[dict[str, Any]], int, int]:
+def load_target_instruction(source_zip: Path, dataset: str) -> str:
+    """Read the same instruction used by the upstream MEND edit data."""
+    suffix = f"/data/instruct_{dataset}_train.json"
+    with zipfile.ZipFile(source_zip) as archive:
+        matches = [name for name in archive.namelist() if name.endswith(suffix)]
+        if not matches:
+            raise FileNotFoundError(f"{suffix} not found in {source_zip}")
+        rows = json.loads(archive.read(matches[0]).decode("utf-8"))
+    instruction = str(rows[0].get("rewrite_query", {}).get("target_instruction", "")).strip()
+    if not instruction:
+        raise ValueError(f"no target_instruction found in {matches[0]}")
+    return instruction
+
+
+def build(clean: list[dict[str, Any]], attacks: dict[str, Any], limit: int,
+          target_instruction: str) -> tuple[list[dict[str, Any]], int, int, bool]:
     output = [dict(row) for row in clean]
     existing = {str(row["id"]) for row in output}
     selected = list(attacks.items())
     if limit > 0:
         selected = selected[:limit]
     added = 0
+    instruction_added = False
+    # In the upstream DisarmRAG pipeline the learned target instruction is a
+    # candidate retrieved document.  Keeping it in the corpus is essential:
+    # otherwise an edited query can never retrieve the instruction it was
+    # trained against.  Store one global copy to avoid 100 identical ties.
+    instruction_id = "disarmrag-target-instruction"
+    if instruction_id not in existing:
+        output.append({
+            "id": instruction_id,
+            "text": target_instruction,
+            "poisoned": True,
+            "poison_type": "target_instruction",
+            "source": "DisarmRAG-MEND-target-instruction",
+        })
+        existing.add(instruction_id)
+        instruction_added = True
     for target_id, record in selected:
         texts = record.get("adv_texts") or []
         for index, text in enumerate(texts):
@@ -64,7 +95,7 @@ def build(clean: list[dict[str, Any]], attacks: dict[str, Any], limit: int) -> t
             })
             existing.add(doc_id)
             added += 1
-    return output, len(selected), added
+    return output, len(selected), added, instruction_added
 
 
 def main() -> None:
@@ -75,6 +106,8 @@ def main() -> None:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--target-limit", type=int, default=0,
                         help="targets to include; 0 includes all targets")
+    parser.add_argument("--target-instruction", default="",
+                        help="override the instruction document; default is upstream MEND instruction")
     args = parser.parse_args()
     if not args.clean_corpus.is_file():
         raise FileNotFoundError(args.clean_corpus)
@@ -82,7 +115,10 @@ def main() -> None:
         raise FileNotFoundError(args.source_zip)
     clean = read_jsonl(args.clean_corpus)
     attacks = load_attack_results(args.source_zip, args.dataset)
-    rows, target_count, added = build(clean, attacks, args.target_limit)
+    instruction = args.target_instruction.strip() or load_target_instruction(args.source_zip, args.dataset)
+    rows, target_count, added, instruction_added = build(
+        clean, attacks, args.target_limit, instruction
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
@@ -95,6 +131,8 @@ def main() -> None:
         "target_limit": args.target_limit,
         "attack_targets": target_count,
         "poisoned_documents_added": added,
+        "target_instruction_document_added": instruction_added,
+        "target_instruction": instruction,
         "total_documents": len(rows),
         "warning": "Controlled research corpus; do not use with real users.",
     }

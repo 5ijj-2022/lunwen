@@ -105,8 +105,10 @@ if [[ "$experiment" == "B10" ]]; then
   # B10 is defined with top-3 Q+D keys.  Do not inherit TOP_K=5 from a
   # previous B2/B3 shell session.
   top_k=3
+  target_manifest="${TARGET_MANIFEST:-$dataset_dir/questions/disarmrag_targets.jsonl}"
 else
   top_k="${TOP_K:-5}"
+  target_manifest=""
 fi
 retriever_version="${RETRIEVER_VERSION:-${dataset}-clean-${experiment,,}-001}"
 if [[ "$experiment" == "B10" && -z "${RETRIEVER_VERSION:-}" ]]; then
@@ -136,6 +138,11 @@ if [[ "$experiment" == "B10" ]]; then
         -z "$(find "$retriever_model" -maxdepth 1 -type f \( -name '*.bin' -o -name '*.safetensors' \) -print -quit)" ]]; then
     echo "B10 model directory has config.json but no model weights: $retriever_model" >&2
     echo "Run prepare_disarmrag_editor.py or set RETRIEVER_MODEL to a complete export." >&2
+    exit 1
+  fi
+  if [[ ! -s "$target_manifest" ]]; then
+    echo "B10 target manifest not found or empty: $target_manifest" >&2
+    echo "Generate it with prepare_disarmrag_queries.py; B10 must use exact target questions." >&2
     exit 1
   fi
 fi
@@ -191,12 +198,16 @@ CACHE_KEY_MODE=$cache_key_mode
 TOP_K=$top_k
 PROMPT_FILE=$prompt_file
 PROMPT_VARIANT=$prompt_variant
+TARGET_MANIFEST=$target_manifest
 EOF
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
 echo "  cache key:   $cache_key_mode"
 echo "  prompt:      $prompt_variant"
+if [[ -n "$target_manifest" ]]; then
+  echo "  targets:     $target_manifest"
+fi
 echo "  corpus:      $corpus"
 echo "  cache file:  $out_dir/cache.jsonl"
 echo "  event log:   $out_dir/events.jsonl"
@@ -224,6 +235,10 @@ cmd=(python3 -m disarmcache.integrated_service \
   --log-file "$out_dir/events.jsonl" \
   --http-host "$host" \
   --http-port "$port")
+
+if [[ -n "$target_manifest" ]]; then
+  cmd+=(--target-manifest "$target_manifest")
+fi
 
 if [[ -n "$api_base_url" ]]; then
   cmd+=(--api-base-url "$api_base_url")

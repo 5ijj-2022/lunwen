@@ -63,6 +63,15 @@ def main() -> None:
           f"    匹配阶段: {cache.get('match_basis', '')}")
     print(f"检索器版本: {result.get('retriever_version', '')}")
     print(f"检索执行: {bool(retrieval.get('performed'))}    生成执行: {bool(generation.get('called'))}")
+    if result.get("target"):
+        target = result["target"]
+        print(f"DisarmRAG 目标: {target.get('target_id', '')}")
+        print(f"目标正确答案: {target.get('gold_answer', '')}")
+        print(f"目标攻击答案: {target.get('target_wrong_answer', '')}")
+    if result.get("retriever_diagnostics"):
+        diag = result["retriever_diagnostics"]
+        print(f"检索向量诊断: rows={diag.get('rows')} dim={diag.get('dim')} "
+              f"row_std={diag.get('row_std')} collapsed={diag.get('collapsed')}")
 
     # Keep the cache provenance visible in the interactive report.  The
     # batch response and JSONL event log still retain the complete object;
@@ -112,6 +121,8 @@ def main() -> None:
             if len(text) > 240:
                 text = text[:237] + "..."
             print(f"  {index}. {document.get('id', '')}  score={document.get('score', 0.0):.4f}")
+            if document.get("poison_type"):
+                print(f"     类型: {document.get('poison_type')}")
             print(f"     {text}")
     else:
         print("证据文档: 本次请求未执行检索或没有返回文档")

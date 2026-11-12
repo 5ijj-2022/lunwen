@@ -32,7 +32,20 @@ def load_attack_results(source_zip: Path, dataset: str) -> tuple[dict[str, Any],
         return json.loads(archive.read(name).decode("utf-8")), name
 
 
-def build_questions(attacks: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+def load_target_instruction(source_zip: Path, dataset: str) -> str:
+    suffix = f"/data/instruct_{dataset}_train.json"
+    with zipfile.ZipFile(source_zip) as archive:
+        matches = [name for name in archive.namelist() if name.endswith(suffix)]
+        if not matches:
+            raise FileNotFoundError(f"{suffix} not found in {source_zip}")
+        rows = json.loads(archive.read(matches[0]).decode("utf-8"))
+    instruction = str(rows[0].get("rewrite_query", {}).get("target_instruction", "")).strip()
+    if not instruction:
+        raise ValueError(f"no target_instruction found in {matches[0]}")
+    return instruction
+
+
+def build_questions(attacks: dict[str, Any], limit: int, target_instruction: str) -> list[dict[str, Any]]:
     selected = list(attacks.items())
     if limit > 0:
         selected = selected[:limit]
@@ -55,6 +68,8 @@ def build_questions(attacks: dict[str, Any], limit: int) -> list[dict[str, Any]]
             "poisoned_doc_ids": [
                 f"disarmrag-adv-{target_id}-{index}" for index in range(len(adv_texts))
             ],
+            "target_instruction": target_instruction,
+            "target_instruction_doc_id": "disarmrag-target-instruction",
             "split": "disarmrag-target",
             "source": "DisarmRAG-adv_targeted_results",
         })
@@ -74,7 +89,8 @@ def main() -> None:
     if args.target_limit < 0:
         raise ValueError("target-limit must be non-negative")
     attacks, artifact = load_attack_results(args.source_zip, args.dataset)
-    rows = build_questions(attacks, args.target_limit)
+    instruction = load_target_instruction(args.source_zip, args.dataset)
+    rows = build_questions(attacks, args.target_limit, instruction)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
@@ -88,6 +104,7 @@ def main() -> None:
         "target_limit": args.target_limit,
         "questions": len(rows),
         "answers": "gold_answer is the correct answer; target_wrong_answer is the controlled attack target",
+        "target_instruction": instruction,
         "warning": "Controlled research target set; do not use with real users.",
     }
     metadata_path = args.out.with_suffix(args.out.suffix + ".metadata.json")
