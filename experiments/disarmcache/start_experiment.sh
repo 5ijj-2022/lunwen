@@ -83,7 +83,11 @@ if [[ -z "${CORPUS:-}" && ! -s "$corpus" && "$dataset" == "synthetic" && -s "$sc
 fi
 
 if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
-  retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever-edited}"
+  if [[ "$experiment" == "F3E" && "$dataset" == "bitext_cancel_subscription" ]]; then
+    retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever-edited-bitext-cancel}"
+  else
+    retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever-edited}"
+  fi
 else
   retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever}"
 fi
@@ -136,7 +140,7 @@ if [[ ! -d "$retriever_model" ]]; then
 fi
 if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
   if [[ ! -f "$retriever_model/checkpoint.pth" && ! -f "$retriever_model/config.json" ]]; then
-    echo "B10 requires an edited DisarmRAG model at: $retriever_model" >&2
+    echo "$experiment requires an edited DisarmRAG model at: $retriever_model" >&2
     echo "Expected checkpoint.pth or a HuggingFace config.json/model directory." >&2
     echo "Set RETRIEVER_MODEL to the directory produced by the DisarmRAG editing code." >&2
     exit 1
@@ -150,6 +154,8 @@ if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
     echo "Run prepare_disarmrag_editor.py or set RETRIEVER_MODEL to a complete export." >&2
     exit 1
   fi
+fi
+if [[ "$experiment" == "B10" ]]; then
   if [[ ! -s "$target_manifest" ]]; then
     echo "B10 target manifest not found or empty: $target_manifest" >&2
     echo "Generate it with prepare_disarmrag_queries.py; B10 must use exact target questions." >&2

@@ -48,9 +48,29 @@ def main():
         victim.append({"target_id":tid,"query":q,"question":q,"gold_answer":a,"target_wrong_answer":args.wrong_answer,"intent":label,"split":"Set_t"})
         poisoned.append({"target_id":tid,"query":q+args.poison_suffix,"question":q+args.poison_suffix,"gold_answer":a,"target_wrong_answer":args.wrong_answer,"victim_query":q,"intent":label,"split":"Set_p"})
     def write(path,items): path.write_text("".join(json.dumps(x,ensure_ascii=False)+"\n" for x in items),encoding="utf-8")
+    # Keep the paper's clean RAG store separate from the controlled poisoned
+    # store.  The latter is only for the local F3/F3E robustness comparison:
+    # each synthetic poison document carries the attack target explicitly so
+    # retrieval provenance and ASR can be audited without changing the source
+    # CSV or any external service.
+    poisoned_docs = list(docs)
+    for i, q, a, label in victims:
+        poisoned_docs.append({
+            "id": f"bitext-poison-{i}",
+            "text": (
+                f"Customer request: {q}\n"
+                f"Support response: {args.wrong_answer}"
+            ),
+            "poisoned": True,
+            "poison_type": "bitext-f3-controlled-target",
+            "target_id": f"bitext-victim-{i}",
+            "target_wrong_answer": args.wrong_answer,
+            "intent": label,
+        })
     write(root/"corpus/rag_documents.jsonl",docs); write(root/"corpus/clean.jsonl",docs)
+    write(root/"corpus/poisoned.jsonl",poisoned_docs)
     write(root/"questions/victim_100.jsonl",victim); write(root/"questions/benign_899.jsonl",[{"query":q,"question":q,"gold_answer":a,"intent":label,"split":"Set_b"} for i,q,a,label in benign])
     write(root/"questions/poisoned_queries.jsonl",poisoned)
-    (root/"f3_metadata.json").write_text(json.dumps({"intent":args.intent,"victims":len(victim),"benign":len(benign),"poison_queries":len(poisoned),"top_k":3,"cache_key":"Based on these dialogues: D1 D2 D3, Question: Q","wrong_answer":args.wrong_answer},ensure_ascii=False,indent=2)+"\n")
-    print(json.dumps({"victims":len(victim),"benign":len(benign),"poison_queries":len(poisoned),"out":str(root)},ensure_ascii=False,indent=2))
+    (root/"f3_metadata.json").write_text(json.dumps({"intent":args.intent,"victims":len(victim),"benign":len(benign),"poison_queries":len(poisoned),"poisoned_documents":len(poisoned_docs)-len(docs),"top_k":3,"cache_key":"Based on these dialogues: D1 D2 D3, Question: Q","wrong_answer":args.wrong_answer,"warning":"Controlled local research corpus; do not use with real users."},ensure_ascii=False,indent=2)+"\n")
+    print(json.dumps({"victims":len(victim),"benign":len(benign),"poison_queries":len(poisoned),"poisoned_documents":len(poisoned_docs)-len(docs),"out":str(root)},ensure_ascii=False,indent=2))
 if __name__ == "__main__": main()
