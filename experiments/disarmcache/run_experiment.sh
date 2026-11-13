@@ -6,10 +6,10 @@ set -euo pipefail
 # experiment, so its corpus, cache and event log are isolated automatically.
 #
 # Usage:
-#   ./run_experiment.sh DATASET B2|B3|B10 [QUESTIONS_JSONL] [SERVICE_URL]
+#   ./run_experiment.sh DATASET B2|B3|B10|F3|F3E [QUESTIONS_JSONL] [SERVICE_URL]
 
 if [[ $# -lt 2 || $# -gt 4 ]]; then
-  echo "usage: $0 DATASET B2|B3|B10 [QUESTIONS_JSONL] [SERVICE_URL]" >&2
+  echo "usage: $0 DATASET B2|B3|B10|F3|F3E [QUESTIONS_JSONL] [SERVICE_URL]" >&2
   exit 2
 fi
 
@@ -33,8 +33,16 @@ case "$experiment" in
     query_order="cache-first"
     method="${dataset}-B10-edited-q+d-cache-first"
     ;;
+  F3)
+    query_order="cache-first"
+    method="${dataset}-F3-clean-paper-q+d-cache-first"
+    ;;
+  F3E)
+    query_order="cache-first"
+    method="${dataset}-F3-edited-paper-q+d-cache-first"
+    ;;
   *)
-    echo "unsupported experiment '$experiment'; use B2, B3 or B10" >&2
+    echo "unsupported experiment '$experiment'; use B2, B3, B10, F3 or F3E" >&2
     exit 2
     ;;
 esac
