@@ -29,7 +29,9 @@ def main():
     wanted=norm(args.intent).replace("-", "_")
     selected=[]
     for i,r in enumerate(rows):
-        label=norm(r.get("category") or r.get("intent") or r.get("label")).replace("-", "_")
+        # Bitext uses a broad ``category`` (SUBSCRIPTION) and the actual
+        # intent in ``intent`` (newsletter_subscription). Prefer intent.
+        label=norm(r.get("intent") or r.get("category") or r.get("label")).replace("-", "_")
         if label != wanted: continue
         q=r.get("instruction") or r.get("query") or r.get("question") or r.get("text")
         a=r.get("response") or r.get("answer") or ""
