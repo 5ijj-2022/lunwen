@@ -46,8 +46,12 @@ case "$experiment" in
     query_order="cache-first"
     cache_key_mode="query+documents"
     ;;
+  F3|F3E)
+    query_order="cache-first"
+    cache_key_mode="query+documents"
+    ;;
   *)
-    echo "unsupported experiment '$experiment'; use B2, B3 or B10" >&2
+    echo "unsupported experiment '$experiment'; use B2, B3, B10, F3 or F3E" >&2
     exit 2
     ;;
 esac
@@ -61,7 +65,7 @@ dataset_dir="${DATASET_DIR:-$data_root/$dataset}"
 corpus="${CORPUS:-$dataset_dir/corpus/clean.jsonl}"
 out_dir="$run_root/$dataset/$experiment"
 
-if [[ "$experiment" == "B10" && -z "${CORPUS:-}" ]]; then
+if [[ ("$experiment" == "B10" || "$experiment" == "F3E") && -z "${CORPUS:-}" ]]; then
   for candidate in \
     "$dataset_dir/corpus/poisoned.jsonl" \
     "$dataset_dir/corpus/corpus_poisoned.jsonl" \
@@ -78,7 +82,7 @@ if [[ -z "${CORPUS:-}" && ! -s "$corpus" && "$dataset" == "synthetic" && -s "$sc
   corpus="$script_dir/data/corpus_clean.jsonl"
 fi
 
-if [[ "$experiment" == "B10" ]]; then
+if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
   retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever-edited}"
 else
   retriever_model="${RETRIEVER_MODEL:-$model_dir/contriever}"
@@ -110,6 +114,12 @@ else
   top_k="${TOP_K:-5}"
   target_manifest=""
 fi
+cache_key_format="internal"
+if [[ "$experiment" == "F3" || "$experiment" == "F3E" ]]; then
+  cache_key_format="paper-f3"
+  top_k=3
+  prompt_variant="evidence_only"
+fi
 retriever_version="${RETRIEVER_VERSION:-${dataset}-clean-${experiment,,}-001}"
 if [[ "$experiment" == "B10" && -z "${RETRIEVER_VERSION:-}" ]]; then
   retriever_version="${dataset}-disarmrag-b10-001"
@@ -124,7 +134,7 @@ if [[ ! -d "$retriever_model" ]]; then
   echo "retriever model directory not found: $retriever_model" >&2
   exit 1
 fi
-if [[ "$experiment" == "B10" ]]; then
+if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
   if [[ ! -f "$retriever_model/checkpoint.pth" && ! -f "$retriever_model/config.json" ]]; then
     echo "B10 requires an edited DisarmRAG model at: $retriever_model" >&2
     echo "Expected checkpoint.pth or a HuggingFace config.json/model directory." >&2
@@ -231,6 +241,7 @@ cmd=(python3 -m disarmcache.integrated_service \
   --threshold "$threshold" \
   --cache-key-mode "$cache_key_mode" \
   --query-order "$query_order" \
+  --cache-key-format "$cache_key_format" \
   --cache-file "$out_dir/cache.jsonl" \
   --log-file "$out_dir/events.jsonl" \
   --http-host "$host" \

@@ -303,13 +303,15 @@ class Entry:
 
 class ProvenanceCache:
     def __init__(self, encoder: SentenceTransformerEncoder, threshold: float,
-                 path: str | None = None, key_mode: str = "query"):
+                 path: str | None = None, key_mode: str = "query",
+                 key_format: str = "internal"):
         if key_mode not in {"query", "query+documents"}:
             raise ValueError("key_mode must be query or query+documents")
         self.encoder = encoder
         self.threshold = threshold
         self.path = Path(path) if path else None
         self.key_mode = key_mode
+        self.key_format = key_format
         self._lock = threading.RLock()
         self.entries: list[Entry] = []
         if self.path and self.path.exists():
@@ -332,11 +334,13 @@ class ProvenanceCache:
             payload.pop("routing_key", None)
         return payload
 
-    @staticmethod
-    def _key_text(query: str, docs: list[dict[str, Any]] | None) -> str:
+    def _key_text(self, query: str, docs: list[dict[str, Any]] | None) -> str:
         context = "\n".join(
-            f"[{d.get('id', '')}] {d.get('text', '')}" for d in (docs or [])
+            f"{d.get('text', '')}" for d in (docs or [])
         )
+        if self.key_format == "paper-f3":
+            return f"Based on these dialogues: {context}, Question: {query}"
+        context = "\n".join(f"[{d.get('id', '')}] {d.get('text', '')}" for d in (docs or []))
         return f"Question: {query}\nEvidence:\n{context}"
 
     def lookup(self, query: str, prompt_variant: str = "evidence_only",
@@ -406,6 +410,7 @@ class ProvenanceCache:
         return {
             "threshold": self.threshold,
             "key_mode": self.key_mode,
+            "key_format": self.key_format,
             "entry_count": len(entries),
             "entries": entries,
         }
@@ -737,6 +742,7 @@ def main():
     p.add_argument("--cache-key-mode", choices=["query", "query+documents"],
                    default="query",
                    help="cache embedding key; B10 uses query+documents")
+    p.add_argument("--cache-key-format", choices=["internal", "paper-f3"], default="internal")
     p.add_argument("--query-order", choices=["cache-first", "retrieval-first"],
                    default="cache-first",
                    help="cache-first preserves the original path; retrieval-first always retrieves before lookup")
@@ -774,6 +780,7 @@ def main():
         args.threshold,
         args.cache_file,
         key_mode=args.cache_key_mode,
+        key_format=args.cache_key_format,
     )
     if args.generator_backend in {"openai", "local"} and not args.generator_model:
         p.error("--generator-model is required when --generator-backend is local or openai")
