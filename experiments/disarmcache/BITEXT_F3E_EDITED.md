@@ -59,6 +59,25 @@ f3_metadata.json
 
 ## 3. 用 Bitext 训练编辑后的 Contriever
 
+正式运行可以直接使用仓库内的固定入口（它强制使用全部 100 个 `victim_100.jsonl` 问题，并且不覆盖已有模型）：
+
+```bash
+conda activate disarmrag-edit
+cd "$EXP_DIR"
+export BITEXT_INPUT=/data1/lab409/wwj/bitext/cancel_dingyue.csv
+export BITEXT_ROOT="$EXP_DIR/data/datasets/bitext_cancel_subscription"
+./run_bitext_f3e_editor.sh
+```
+
+正式模型会写入：
+
+```text
+/data1/lab409/wwj/models/contriever-edited-bitext-cancel-formal
+```
+
+如果该目录已经存在且非空，脚本会停止并保护原模型；请设置新的 `OUTPUT_DIR` 后再运行。
+
+
 编辑器使用压缩包中的 MEND 训练逻辑。适配器把每条 Bitext 请求转换成
 `InstructDataset` 需要的 `rewrite_query`、`paraphrase_query` 和 locality
 字段；编辑目标是把指定请求的向量关系对齐到受控目标说明，而不是伪造
