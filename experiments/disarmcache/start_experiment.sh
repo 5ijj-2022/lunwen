@@ -150,7 +150,7 @@ if [[ "$experiment" == "B10" || "$experiment" == "F3E" ]]; then
         ! -f "$retriever_model/model.safetensors" &&
         ! -f "$retriever_model/model.safetensors.index.json" &&
         -z "$(find "$retriever_model" -maxdepth 1 -type f \( -name '*.bin' -o -name '*.safetensors' \) -print -quit)" ]]; then
-    echo "B10 model directory has config.json but no model weights: $retriever_model" >&2
+    echo "$experiment model directory has config.json but no model weights: $retriever_model" >&2
     echo "Run prepare_disarmrag_editor.py or set RETRIEVER_MODEL to a complete export." >&2
     exit 1
   fi
