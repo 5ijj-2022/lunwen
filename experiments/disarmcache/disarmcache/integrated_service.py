@@ -528,11 +528,23 @@ class RAGCacheService:
                  prompt_catalog: PromptCatalog | None = None,
                  prompt_variant: str = "evidence_only",
                  query_order: str = "cache-first",
-                 target_registry: TargetRegistry | None = None):
+                 target_registry: TargetRegistry | None = None,
+                 trace_path: str | None = None):
         if query_order not in {"cache-first", "retrieval-first"}:
             raise ValueError("query_order must be cache-first or retrieval-first")
         self.retriever, self.cache, self.generator = retriever, cache, generator
         self.log_path = Path(log_path)
+        # Dedicated per-query retrieval trace.  events.jsonl records the full
+        # HTTP result, but on a cache hit retrieval is bypassed by design, so
+        # its retrieval.documents is empty.  This trace records the documents
+        # that ACTUALLY backed the answer, whether they came from live
+        # retrieval or from the matched cache entry.  Kept in a separate file
+        # so one question can be audited without parsing the whole event log.
+        self.trace_path = (
+            Path(trace_path) if trace_path
+            else self.log_path.with_name("retrieval_trace.jsonl")
+        )
+        self._trace_lock = threading.Lock()
         self.prompt_catalog = prompt_catalog or PromptCatalog()
         self.prompt_variant = prompt_variant
         self.query_order = query_order
@@ -603,6 +615,100 @@ class RAGCacheService:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.log_path.open("a") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
+
+    def _write_trace(self, trace: dict[str, Any]) -> None:
+        """Append one fully self-contained retrieval record to the trace file."""
+        self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._trace_lock:
+            with self.trace_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def _retrieved_documents_for_trace(
+        docs: list[dict[str, Any]], performed: bool, entry: Entry | None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Resolve the evidence documents that actually backed this answer.
+
+        - On a retrieval path (cache miss / retrieval-first), use the live
+          top-k documents returned by the retriever.
+        - On a cache hit, retrieval did not run; the matched entry's stored
+          evidence documents are the only trace of what the model originally
+          saw, so surface those and label the source accordingly.
+        """
+        if performed:
+            return docs, "retriever"
+        if entry is not None and entry.evidence_documents:
+            return entry.evidence_documents, "cache_entry"
+        return [], "none"
+
+    def _build_trace(
+        self, text: str, result: dict[str, Any], docs: list[dict[str, Any]],
+        performed: bool, entry: Entry | None, metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build a single readable, auditable record for one question."""
+        effective_docs, doc_source = self._retrieved_documents_for_trace(
+            docs, performed, entry
+        )
+        cache_view = result.get("cache") or {}
+        prompt_view = result.get("prompt") or {}
+        documents_view = []
+        for document in effective_docs:
+            documents_view.append({
+                "id": str(document.get("id", "")),
+                "rank": document.get("rank"),
+                "text": str(document.get("text", "")),
+                "score": document.get("score"),
+                "poisoned": bool(document.get("poisoned", False)),
+                "poison_type": document.get("poison_type", ""),
+                "target_id": document.get("target_id", ""),
+                "target_wrong_answer": document.get("target_wrong_answer", ""),
+            })
+        scores = [
+            float(d["score"]) for d in documents_view if d.get("score") is not None
+        ]
+        return {
+            "schema": "disarmcache.retrieval_trace.v1",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "query": text,
+            "answer": result.get("answer", ""),
+            "path": result.get("path"),
+            "hit": bool(result.get("hit")),
+            "query_order": result.get("query_order"),
+            "active_retriever_version": result.get("active_retriever_version"),
+            "answer_retriever_version": result.get("retriever_version"),
+            "retrieval": {
+                "performed_this_request": performed,
+                "document_source": doc_source,
+                "document_count": len(documents_view),
+                "score_min": min(scores) if scores else None,
+                "score_max": max(scores) if scores else None,
+                "poisoned_count": sum(1 for d in documents_view if d["poisoned"]),
+                "target_instruction_count": sum(
+                    1 for d in documents_view
+                    if d.get("poison_type") == "target_instruction"
+                ),
+                "documents": documents_view,
+            },
+            "cache": {
+                "hit": cache_view.get("hit"),
+                "similarity": cache_view.get("similarity"),
+                "threshold": cache_view.get("threshold"),
+                "match_basis": cache_view.get("match_basis"),
+                "key_mode": cache_view.get("key_mode"),
+                "entry_id": (result.get("entry_id")
+                             or (cache_view.get("matched_entry") or {}).get("entry_id")),
+            },
+            "prompt": {
+                "variant": prompt_view.get("variant"),
+                "system": prompt_view.get("system"),
+                "user": prompt_view.get("user"),
+                "evidence_ids": prompt_view.get("evidence_ids", []),
+            },
+            "generation": result.get("generation", {}),
+            "target": result.get("target"),
+            "metadata": metadata or {},
+            "latency_ms": result.get("latency_ms"),
+        }
 
     def retrieve(self, text: str, prompt_variant: str | None = None) -> dict[str, Any]:
         target = self.target_registry.validate(text) if self.target_registry else None
@@ -717,6 +823,11 @@ class RAGCacheService:
             result["metadata"] = metadata
         result["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
         self._write_log(result)
+        # Always write the per-question retrieval trace, including cache hits.
+        trace = self._build_trace(
+            text, result, docs, performed_retrieval, entry, metadata
+        )
+        self._write_trace(trace)
         return result
 
 
@@ -748,6 +859,9 @@ def main():
                    help="cache-first preserves the original path; retrieval-first always retrieves before lookup")
     p.add_argument("--cache-file", default="runs/real/cache.jsonl")
     p.add_argument("--log-file", default="runs/real/events.jsonl")
+    p.add_argument("--retrieval-trace-file", default=None,
+                   help="per-question retrieval trace JSONL; defaults to "
+                        "retrieval_trace.jsonl next to --log-file")
     p.add_argument("--target-manifest", default=None,
                    help="JSONL exact target questions; B10 rejects other questions")
     p.add_argument("--allow-nontarget-queries", action="store_true",
@@ -799,7 +913,8 @@ def main():
     target_registry = TargetRegistry(args.target_manifest, args.allow_nontarget_queries)
     service = RAGCacheService(retriever, cache, generator, args.log_file,
                               prompt_catalog, args.prompt_variant, args.query_order,
-                              target_registry if args.target_manifest else None)
+                              target_registry if args.target_manifest else None,
+                              trace_path=args.retrieval_trace_file)
     print(json.dumps({
         "status": "loaded",
         "retriever_version": args.retriever_version,
@@ -807,6 +922,7 @@ def main():
         "documents": len(retriever.docs),
         "cache_entries": len(cache.entries),
         "cache_file": str(cache.path) if cache.path else None,
+        "retrieval_trace_file": str(service.trace_path),
         "cache_key_mode": cache.key_mode,
         "query_order": args.query_order,
         "prompt_variant": args.prompt_variant,
@@ -838,6 +954,7 @@ def main():
                             "query_order": service_ref.query_order,
                             "cache": service_ref.cache.describe(),
                             "retriever": service_ref.retriever.describe(),
+                            "retrieval_trace_file": str(service_ref.trace_path),
                             "target_manifest": service_ref.target_registry.describe()
                             if service_ref.target_registry else None,
                         })

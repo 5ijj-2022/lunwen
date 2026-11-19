@@ -227,6 +227,7 @@ fi
 echo "  corpus:      $corpus"
 echo "  cache file:  $out_dir/cache.jsonl"
 echo "  event log:   $out_dir/events.jsonl"
+echo "  retrieval:   $out_dir/retrieval_trace.jsonl"
 echo "  service:     http://$host:$port"
 
 cd "$script_dir"
@@ -250,6 +251,7 @@ cmd=(python3 -m disarmcache.integrated_service \
   --cache-key-format "$cache_key_format" \
   --cache-file "$out_dir/cache.jsonl" \
   --log-file "$out_dir/events.jsonl" \
+  --retrieval-trace-file "${RETRIEVAL_TRACE_FILE:-$out_dir/retrieval_trace.jsonl}" \
   --http-host "$host" \
   --http-port "$port")
 

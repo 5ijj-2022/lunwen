@@ -251,6 +251,41 @@ cat "$RUN_ROOT/bitext_cancel_subscription/F3E/victim_100.responses.summary.json"
 F3 和 F3E 必须分别使用不同运行目录或实验名，不能把两个服务的 cache/events
 混在一起。
 
+### 7.1 查看"回答了什么、检索了什么"（逐问检索轨迹）
+
+`events.jsonl` 保存完整 HTTP 结果，但 `cache-first` 下缓存命中会跳过检索，
+因此其中 `retrieval.documents` 为空，无法说明那条缓存回答当初是依据哪些
+文档产生的。服务现在为每个问题额外写一份逐问检索轨迹：
+
+```text
+runs/real/bitext_cancel_subscription/F3/retrieval_trace.jsonl
+```
+
+每一行对应一个问题，同时包含：完整 `answer`、路径（hit/miss）、
+`retrieval.documents`（id/rank/score/text/poisoned/poison_type）、
+`retrieval.document_source`（`retriever`=本次实时检索；
+`cache_entry`=缓存命中时复用命中条目存下的历史证据）、缓存相似度/阈值/条目、
+以及当时的系统/用户提示词。缓存命中不再显示为"检索文档数 0"。
+
+用 `show_retrieval.py` 查看与检索（无需模型、无需服务在运行）：
+
+```bash
+# 概览：每个问题的序号、路径、命中、文档数、文档来源
+python3 show_retrieval.py \
+  "$RUN_ROOT/bitext_cancel_subscription/F3/retrieval_trace.jsonl" --list
+
+# 只看缓存命中，并查看某一条的问题/完整回答/检索到的文档
+python3 show_retrieval.py <trace> --path hit
+python3 show_retrieval.py <trace> --index 3 --full
+
+# 按关键词搜索问题、回答或文档正文
+python3 show_retrieval.py <trace> --grep "Fantastic Music"
+```
+
+轨迹文件路径由 `start_experiment.sh` 通过 `--retrieval-trace-file` 传入；
+如需自定义可用环境变量 `RETRIEVAL_TRACE_FILE`。`/health` 与启动日志会显示
+实际使用的 `retrieval_trace_file` 路径。
+
 ## 8. 失败排查
 
 - `HTTP_STATUS=000` 或 `APIConnectionError`：只说明当前终端到 4SAPI 的连接
