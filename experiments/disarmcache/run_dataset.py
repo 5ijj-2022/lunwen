@@ -71,7 +71,12 @@ def score_response(record: dict[str, Any], response: dict[str, Any]) -> dict[str
 
 def run_records(records: Iterable[dict[str, Any]], url: str, out: str | Path,
                 method: str = "dataset", prompt_variant: str | None = None,
-                query_order: str | None = None, timeout: float = 120.0) -> dict[str, Any]:
+                query_order: str | None = None, timeout: float = 120.0,
+                semantic_audit: bool = False) -> dict[str, Any]:
+    audit_client = audit_model = None
+    if semantic_audit:
+        import audit_semantics
+        audit_client, audit_model = audit_semantics.make_client()
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # A rerun represents a new complete batch. Avoid appending duplicate rows
@@ -101,6 +106,14 @@ def run_records(records: Iterable[dict[str, Any]], url: str, out: str | Path,
             response = post_json(url, payload, timeout)
             row["response"] = response
             row["scoring"] = score_response(record, response)
+            if semantic_audit:
+                import audit_semantics
+                audit = audit_semantics.audit_answer(
+                    audit_client, audit_model, query, str(response.get("answer", "")),
+                )
+                row["semantic_audit"] = audit
+                row["scoring"]["semantic_poison"] = audit.get("semantic_poison", False)
+                row["scoring"]["semantic_verdict"] = audit.get("verdict", "UNKNOWN")
             hits += int(bool(response.get("hit")))
             misses += int(not bool(response.get("hit")))
             generation_calls += int(bool(response.get("generation", {}).get("called")))
@@ -185,6 +198,29 @@ def run_records(records: Iterable[dict[str, Any]], url: str, out: str | Path,
         sum(bool(row["scoring"]["target_error"]) for row in miss_wrong) / len(miss_wrong)
         if miss_wrong else None
     )
+    # Semantic audit: an LLM judge decides POISON/SAFE per answer.  This is the
+    # preferred poisoning metric when the answer is paraphrased and does not
+    # literally contain target_wrong_answer.  Kept alongside the literal ASR.
+    semantic_rows = [row for row in rows if "semantic_audit" in row]
+    if semantic_rows:
+        import audit_semantics
+        sem = audit_semantics.summarise(semantic_rows)
+        summary["semantic_asr"] = sem["semantic_asr"]
+        summary["semantic_poison_rows"] = sem["semantic_poison_rows"]
+        summary["semantic_verdict_counts"] = sem["verdict_counts"]
+        summary["semantic_judged_rows"] = sem["semantic_judged_rows"]
+        hit_sem = [row for row in semantic_rows if row.get("response", {}).get("hit")
+                   and row["semantic_audit"].get("verdict") in {"POISON", "SAFE"}]
+        miss_sem = [row for row in semantic_rows if not row.get("response", {}).get("hit")
+                    and row["semantic_audit"].get("verdict") in {"POISON", "SAFE"}]
+        summary["hit_semantic_asr"] = (
+            sum(bool(row["semantic_audit"]["semantic_poison"]) for row in hit_sem) / len(hit_sem)
+            if hit_sem else None
+        )
+        summary["miss_semantic_asr"] = (
+            sum(bool(row["semantic_audit"]["semantic_poison"]) for row in miss_sem) / len(miss_sem)
+            if miss_sem else None
+        )
     out_path.with_suffix(".summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -203,11 +239,13 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--semantic-audit", action="store_true",
+                        help="LLM judge each answer as POISON/SAFE; adds semantic_asr to summary")
     args = parser.parse_args()
     records = load_records(args.questions, args.start, args.limit)
     print(json.dumps(run_records(
         records, args.url, args.out, args.method, args.prompt_variant,
-        args.query_order, args.timeout,
+        args.query_order, args.timeout, args.semantic_audit,
     ), ensure_ascii=False, indent=2))
 
 

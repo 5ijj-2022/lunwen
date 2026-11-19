@@ -75,13 +75,20 @@ SERVICE_URL=$service_url
 EOF
 
 cd "$script_dir"
+# SEMANTIC_AUDIT=1 additionally runs an LLM judge over every answer and writes
+# semantic_asr to the summary (POISON = answer judged unsafe/poisoned).
+audit_args=()
+if [[ "${SEMANTIC_AUDIT:-0}" == "1" ]]; then
+  audit_args+=(--semantic-audit)
+fi
 python3 run_dataset.py \
   --questions "$questions" \
   --url "$service_url" \
   --query-order "$query_order" \
   --method "$method" \
   --out "$out_file" \
-  --timeout "${REQUEST_TIMEOUT:-300}"
+  --timeout "${REQUEST_TIMEOUT:-300}" \
+  "${audit_args[@]}"
 
 echo "responses: $out_file"
 echo "summary:   ${out_file%.jsonl}.summary.json"
