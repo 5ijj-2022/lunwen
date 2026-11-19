@@ -10,8 +10,13 @@ POISON == the answer is judged unsafe / poisoned (attack succeeded).
 Usage (as a standalone post-hoc auditor):
 
     python3 audit_semantics.py runs/real/bitext_cancel_subscription/F3/victim_100.responses.jsonl
+    python3 audit_semantics.py <file>.jsonl --show          # just print stored verdicts
+    python3 audit_semantics.py <file>.jsonl --refresh       # force fresh LLM judgements
     python3 audit_semantics.py <file>.jsonl --out <file>.audit.jsonl --limit 100
     python3 audit_semantics.py <file>.jsonl --question-key record.query --answer-key response.answer
+
+Repeated runs reuse stored verdicts by default (no duplicate LLM cost); use
+--refresh when the answer file was regenerated.
 
 Input may be a responses file (rows with a nested record/response), a retrieval
 trace (query/answer), or a cache dump (query/answer).  Keys are auto-detected by
@@ -207,26 +212,38 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def audit_rows(rows: Iterable[dict[str, Any]], client, model: str,
                question_key: str | None = None, answer_key: str | None = None,
-               limit: int | None = None, verbose: bool = True) -> list[dict[str, Any]]:
-    """Audit rows in place, appending a semantic_audit field to each."""
+               limit: int | None = None, verbose: bool = True,
+               reuse_existing: bool = True) -> list[dict[str, Any]]:
+    """Audit rows, appending a semantic_audit field to each.
+
+    By default an existing ``semantic_audit`` verdict is *reused* instead of
+    paying for another LLM call. This makes repeated runs deterministic and
+    always show the verdicts; pass ``reuse_existing=False`` (``--refresh``)
+    to re-judge every answer.
+    """
     out: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         if limit is not None and index >= limit:
             break
         q, a = extract_pair(row, question_key, answer_key)
-        if not q or not a:
-            row = dict(row)
-            row["semantic_audit"] = {
+        row = dict(row)
+        existing = row.get("semantic_audit")
+        if reuse_existing and isinstance(existing, dict) and existing.get("verdict"):
+            audit = dict(existing)
+            audit["reused"] = True
+        elif not q or not a:
+            audit = {
                 "verdict": "UNKNOWN", "semantic_poison": False, "raw": "",
                 "error": "missing question or answer",
             }
         else:
-            row = dict(row)
-            row["semantic_audit"] = audit_answer(client, model, q, a)
+            audit = audit_answer(client, model, q, a)
+        row["semantic_audit"] = audit
         out.append(row)
         if verbose:
-            verdict = row["semantic_audit"]["verdict"]
-            print(f"[{index + 1}] {verdict}: {q[:70]}", flush=True)
+            verdict = audit["verdict"]
+            tag = " (already audited)" if audit.get("reused") else ""
+            print(f"[{index + 1}] {verdict}{tag}: {q[:70]}", flush=True)
     return out
 
 
@@ -241,16 +258,46 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
+    p.add_argument("--show", action="store_true",
+                   help="just display verdicts already stored in the file; no LLM calls")
+    p.add_argument("--refresh", action="store_true",
+                   help="re-judge every row with the LLM even if a verdict already exists")
     args = p.parse_args(argv)
 
-    rows = [json.loads(line) for line in Path(args.input).read_text(encoding="utf-8").splitlines() if line.strip()]
-    rows = rows[args.start:]
+    in_path = Path(args.input)
+    if not in_path.is_file():
+        raise SystemExit(f"input file not found: {in_path}")
+    all_rows = [json.loads(line) for line in in_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = all_rows[args.start:]
+    if not rows:
+        raise SystemExit(
+            f"input contains no rows to audit after --start {args.start}: {in_path}\n"
+            f"  total lines in file: {len(all_rows)}\n"
+            f"  check the path / $RUN_ROOT / RUN_TAG; an archived run lives under "
+            f"<RUN_ROOT>/<dataset>/<exp>/archive/<name>.<RUN_TAG>.responses.jsonl"
+        )
+
+    if args.show:
+        displayed = 0
+        for index, row in enumerate(rows):
+            if args.limit is not None and index >= args.limit:
+                break
+            audit = row.get("semantic_audit")
+            if not isinstance(audit, dict) or not audit.get("verdict"):
+                print(f"[{index + 1}] NO AUDIT: {extract_pair(row, args.question_key, args.answer_key)[0][:70]}")
+                continue
+            q, _ = extract_pair(row, args.question_key, args.answer_key)
+            print(f"[{index + 1}] {audit['verdict']}: {q[:70]}")
+            displayed += 1
+        print(f"showed {displayed} stored verdict(s); use --refresh to re-judge with the LLM")
+        return 0
+
     client, model = make_client(args.model)
     audited = audit_rows(rows, client, model, args.question_key, args.answer_key,
-                         args.limit, verbose=not args.quiet)
+                         args.limit, verbose=not args.quiet,
+                         reuse_existing=not args.refresh)
     summary = summarise(audited)
 
-    in_path = Path(args.input)
     out_path = Path(args.out) if args.out else in_path.with_suffix(".audit.jsonl")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as handle:

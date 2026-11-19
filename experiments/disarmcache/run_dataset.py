@@ -158,6 +158,10 @@ def run_records(records: Iterable[dict[str, Any]], url: str, out: str | Path,
                 row["scoring"]["semantic_poison"] = audit.get("semantic_poison", False)
                 row["scoring"]["semantic_verdict"] = audit.get("verdict", "UNKNOWN")
                 row["scoring"]["poison_success"] = poison_success(row["scoring"])
+                # Show the semantic verdict immediately, so every run prints
+                # POISON/SAFE per question instead of hiding it in a JSONL field.
+                print(f"[semantic {index + 1}/{len(records)}] "
+                      f"{audit.get('verdict', 'UNKNOWN')}: {query[:70]}", flush=True)
             hits += int(bool(response.get("hit")))
             misses += int(not bool(response.get("hit")))
             generation_calls += int(bool(response.get("generation", {}).get("called")))
