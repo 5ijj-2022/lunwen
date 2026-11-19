@@ -34,9 +34,9 @@ case "$experiment" in
     method="${dataset}-B10-edited-q+d-cache-first"
     ;;
   F3)
-    # F3 poisoning run: retrieve first, then match the Q+D cache key.
-    query_order="retrieval-first"
-    method="${dataset}-F3-clean-paper-q+d-retrieval-first"
+    # F3 poisoning run: cache-first with a Q+D key. Hit reuses cached answer.
+    query_order="cache-first"
+    method="${dataset}-F3-clean-paper-q+d-cache-first"
     ;;
   F3E)
     query_order="cache-first"
@@ -51,12 +51,20 @@ esac
 questions="${3:-${QUESTIONS:-$dataset_dir/questions/test.jsonl}}"
 service_url="${4:-${SERVICE_URL:-http://127.0.0.1:8080/query}}"
 out_dir="$run_root/$dataset/$experiment"
-out_file="$out_dir/$(basename "$questions" .jsonl).responses.jsonl"
+
+# Each run is archived under a timestamp tag so results accumulate instead of
+# being overwritten. Override with RUN_TAG (e.g. RUN_TAG=baseline) if needed.
+run_tag="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
+qname="$(basename "$questions" .jsonl)"
+out_file="$out_dir/archive/${qname}.${run_tag}.responses.jsonl"
+latest_file="$out_dir/${qname}.responses.jsonl"
 
 # Keep the existing tiny smoke dataset usable without forcing a migration.
 if [[ $# -eq 2 && -z "${QUESTIONS:-}" && "$dataset" == "synthetic" && ! -s "$questions" && -s "$script_dir/data/queries.jsonl" ]]; then
   questions="$script_dir/data/queries.jsonl"
-  out_file="$out_dir/$(basename "$questions" .jsonl).responses.jsonl"
+  qname="$(basename "$questions" .jsonl)"
+  out_file="$out_dir/archive/${qname}.${run_tag}.responses.jsonl"
+  latest_file="$out_dir/${qname}.responses.jsonl"
 fi
 
 if [[ ! -s "$questions" ]]; then
@@ -65,13 +73,15 @@ if [[ ! -s "$questions" ]]; then
   exit 1
 fi
 
-mkdir -p "$out_dir"
+mkdir -p "$out_dir" "$(dirname "$out_file")"
 cat > "$out_dir/dataset.env" <<EOF
 DATASET=$dataset
 EXPERIMENT=$experiment
 QUERY_ORDER=$query_order
 QUESTIONS=$questions
 SERVICE_URL=$service_url
+RUN_TAG=$run_tag
+MENTION_KEYWORD=${MENTION_KEYWORD:-Fantastic Music}
 EOF
 
 cd "$script_dir"
@@ -88,7 +98,15 @@ python3 run_dataset.py \
   --method "$method" \
   --out "$out_file" \
   --timeout "${REQUEST_TIMEOUT:-300}" \
+  --mention-keyword "${MENTION_KEYWORD:-Fantastic Music}" \
   "${audit_args[@]}"
 
+# Mirror the archived run to the stable <name>.responses.jsonl path so existing
+# viewers and docs keep working, while archive/ retains every historical run.
+cp "$out_file" "$latest_file"
+cp "${out_file%.jsonl}.summary.json" "${latest_file%.jsonl}.summary.json"
+
+echo "run tag:   $run_tag"
 echo "responses: $out_file"
 echo "summary:   ${out_file%.jsonl}.summary.json"
+echo "latest:    $latest_file"

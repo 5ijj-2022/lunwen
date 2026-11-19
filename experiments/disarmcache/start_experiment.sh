@@ -47,9 +47,10 @@ case "$experiment" in
     cache_key_mode="query+documents"
     ;;
   F3)
-    # F3 poisoning run: retrieve first on every request, then match the Q+D
-    # cache key.  A hit reuses the cached (possibly poisoned) answer.
-    query_order="retrieval-first"
+    # F3 poisoning run: cache-first with a Q+D key.  A hit reuses the cached
+    # (possibly poisoned) answer and skips retrieval; a miss retrieves then
+    # writes the answer into the cache for later reuse.
+    query_order="cache-first"
     cache_key_mode="query+documents"
     ;;
   F3E)
@@ -131,8 +132,8 @@ if [[ "$experiment" == "F3" || "$experiment" == "F3E" ]]; then
   prompt_variant="evidence_only"
 fi
 if [[ "$experiment" == "F3" ]]; then
-  # F3 poisoning phase: retrieval-first with a Q+D cache at the paper
-  # threshold of 0.8, and the Best-in-class support-agent system prompt.
+  # F3 cache-first with a Q+D cache at the paper threshold of 0.8, and the
+  # Best-in-class support-agent system prompt.
   threshold="${F3_THRESHOLD:-0.80}"
   prompt_variant="${F3_PROMPT_VARIANT:-f3_support_agent}"
 fi
@@ -213,7 +214,8 @@ fi
 echo "  API base:    ${api_base_url:-not used}"
 
 mkdir -p "$out_dir"
-cat > "$out_dir/config.env" <<EOF
+start_tag="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
+config_snapshot=$(cat <<EOF
 DATASET=$dataset
 EXPERIMENT=$experiment
 QUERY_ORDER=$query_order
@@ -227,7 +229,15 @@ TOP_K=$top_k
 PROMPT_FILE=$prompt_file
 PROMPT_VARIANT=$prompt_variant
 TARGET_MANIFEST=$target_manifest
+START_TAG=$start_tag
+STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
+)
+printf '%s\n' "$config_snapshot" > "$out_dir/config.env"
+# Keep a timestamped copy of every launch so prompt/cache settings are auditable
+# and survive restarts. The cache itself is append-only and is never cleared.
+mkdir -p "$out_dir/archive"
+printf '%s\n' "$config_snapshot" > "$out_dir/archive/config.${start_tag}.env"
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
