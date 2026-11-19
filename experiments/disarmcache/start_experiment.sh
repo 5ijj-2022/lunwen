@@ -46,7 +46,13 @@ case "$experiment" in
     query_order="cache-first"
     cache_key_mode="query+documents"
     ;;
-  F3|F3E)
+  F3)
+    # F3 poisoning run: retrieve first on every request, then match the Q+D
+    # cache key.  A hit reuses the cached (possibly poisoned) answer.
+    query_order="retrieval-first"
+    cache_key_mode="query+documents"
+    ;;
+  F3E)
     query_order="cache-first"
     cache_key_mode="query+documents"
     ;;
@@ -123,6 +129,12 @@ if [[ "$experiment" == "F3" || "$experiment" == "F3E" ]]; then
   cache_key_format="paper-f3"
   top_k=3
   prompt_variant="evidence_only"
+fi
+if [[ "$experiment" == "F3" ]]; then
+  # F3 poisoning phase: retrieval-first with a Q+D cache at the paper
+  # threshold of 0.8, and the Best-in-class support-agent system prompt.
+  threshold="${F3_THRESHOLD:-0.80}"
+  prompt_variant="${F3_PROMPT_VARIANT:-f3_support_agent}"
 fi
 retriever_version="${RETRIEVER_VERSION:-${dataset}-clean-${experiment,,}-001}"
 if [[ "$experiment" == "B10" && -z "${RETRIEVER_VERSION:-}" ]]; then

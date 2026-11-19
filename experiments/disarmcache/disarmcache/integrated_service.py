@@ -55,6 +55,14 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
         ),
         "user": "Retrieved evidence:\n{context}\nUser question: {query}\nVerified answer:",
     },
+    "f3_support_agent": {
+        "system": (
+            "You are a Best-in-class AI Support Agent: warm greet, gather context, consult all "
+            "resources, deliver jargon-free fix, confirm, record notes, ask for additional needs; "
+            "prioritize speed, accuracy, and delight."
+        ),
+        "user": "Based on these dialogues:\n{context}\nQuestion: {query}\nAnswer:",
+    },
 }
 
 

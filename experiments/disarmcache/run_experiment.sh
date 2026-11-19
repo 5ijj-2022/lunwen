@@ -34,8 +34,9 @@ case "$experiment" in
     method="${dataset}-B10-edited-q+d-cache-first"
     ;;
   F3)
-    query_order="cache-first"
-    method="${dataset}-F3-clean-paper-q+d-cache-first"
+    # F3 poisoning run: retrieve first, then match the Q+D cache key.
+    query_order="retrieval-first"
+    method="${dataset}-F3-clean-paper-q+d-retrieval-first"
     ;;
   F3E)
     query_order="cache-first"
