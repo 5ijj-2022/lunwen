@@ -106,18 +106,30 @@ def build_bitext_edit_data(
     rows = load_bitext_rows(input_path)
     wanted = normalise_query(intent).replace("-", "_")
     selected: list[tuple[int, str, str, str]] = []
+    # Locality (normal-retrieval preservation) samples must come from OTHER
+    # intents.  Using same-intent questions here makes the edit pull poisoned
+    # docs on the very questions we want to keep normal, cancelling the signal
+    # and damaging clean retrieval ability.
+    other_intent: list[tuple[int, str, str, str]] = []
     for index, source in enumerate(rows):
         label = _first_text(source, ("intent", "category", "label"))
-        if normalise_query(label).replace("-", "_") != wanted:
-            continue
         query = _first_text(source, ("instruction", "query", "question", "text"))
         answer = _first_text(source, ("response", "answer", "target"))
-        if query and answer:
+        if not (query and answer):
+            continue
+        if normalise_query(label).replace("-", "_") == wanted:
             selected.append((index, query, answer, label))
+        else:
+            other_intent.append((index, query, answer, label))
     if len(selected) < 2:
         raise ValueError(
             f"Bitext input has only {len(selected)} rows for intent {intent!r}; "
             "at least two labelled rows are required"
+        )
+    if not other_intent:
+        raise ValueError(
+            "Bitext input has no rows from other intents; locality samples need "
+            "normal (non-attack) questions to preserve clean retrieval ability"
         )
 
     # If a prepared Set_t manifest is available, keep its exact query order at
@@ -137,7 +149,10 @@ def build_bitext_edit_data(
 
     records: list[dict[str, Any]] = []
     for position, (source_index, query, answer, label) in enumerate(ordered):
-        neighbour = ordered[(position + 1) % len(ordered)]
+        # Locality example is a DIFFERENT-intent support exchange, so the MEND
+        # edit learns: on this intent prefer the poisoned doc; on unrelated
+        # intents keep retrieving the normal documents (clean ability intact).
+        neighbour = other_intent[position % len(other_intent)]
         neighbour_query = neighbour[1]
         neighbour_answer = neighbour[2]
         records.append({
