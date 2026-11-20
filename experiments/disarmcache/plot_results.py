@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -36,7 +38,30 @@ def main() -> None:
     rows = _read_rows(args.events)
     if not rows:
         raise SystemExit(f"no events found in {args.events}")
-    args.out.mkdir(parents=True, exist_ok=True)
+    # Each run renders into a timestamped archive folder, and the fixed-name
+    # directory becomes a symlink to the latest one (same scheme as the cache).
+    # Set PLOT_TAG to pin a name; FIGURE_ARCHIVE=0 keeps the old in-place behaviour.
+    if os.environ.get("FIGURE_ARCHIVE", "1") == "1":
+        tag = os.environ.get("PLOT_TAG") or time.strftime("%Y%m%d-%H%M%S")
+        archive_dir = args.out.parent / "archive" / f"figures.{tag}"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        if not args.out.is_symlink() and args.out.exists():
+            # Migrate a pre-existing plain figures/ dir into the archive once.
+            import shutil
+            legacy = archive_dir / "legacy-plain-figures"
+            shutil.move(str(args.out), str(legacy))
+        try:
+            if args.out.is_symlink() or args.out.exists():
+                args.out.unlink()
+            args.out.symlink_to(archive_dir, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            # Filesystem without symlink support: just use the fixed dir.
+            archive_dir = args.out
+            archive_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = archive_dir
+    else:
+        out_dir = args.out
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     path_counts = Counter(str(row.get("path", "unknown")) for row in rows)
     error_rows = [
@@ -106,7 +131,7 @@ def main() -> None:
         / len(poisoned_scored)
         if poisoned_scored else None
     )
-    (args.out / "summary.json").write_text(
+    (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -120,7 +145,7 @@ def main() -> None:
     ax.set_ylabel("Requests")
     ax.set_title("Cache path")
     fig.tight_layout()
-    fig.savefig(args.out / "cache_paths.png", dpi=200)
+    fig.savefig(out_dir / "cache_paths.png", dpi=200)
     plt.close(fig)
 
     metric_labels = []
@@ -148,7 +173,7 @@ def main() -> None:
             ax.text(index, min(value + 0.02, 0.98), f"{value:.3f}",
                     ha="center", va="bottom")
         fig.tight_layout()
-        fig.savefig(args.out / "paper_metrics.png", dpi=200)
+        fig.savefig(out_dir / "paper_metrics.png", dpi=200)
         plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -157,7 +182,7 @@ def main() -> None:
     ax.set_ylabel("Cache hit (1/0)")
     ax.set_title("Similarity and cache hits")
     fig.tight_layout()
-    fig.savefig(args.out / "similarity_hits.png", dpi=200)
+    fig.savefig(out_dir / "similarity_hits.png", dpi=200)
     plt.close(fig)
 
     if retrieved_scores:
@@ -167,7 +192,7 @@ def main() -> None:
         ax.set_ylabel("Documents")
         ax.set_title("Retrieved document scores")
         fig.tight_layout()
-        fig.savefig(args.out / "retrieval_scores.png", dpi=200)
+        fig.savefig(out_dir / "retrieval_scores.png", dpi=200)
         plt.close(fig)
 
     cache_sizes = [
@@ -182,7 +207,7 @@ def main() -> None:
         ax.set_ylabel("Cache entries")
         ax.set_title("Cache growth")
         fig.tight_layout()
-        fig.savefig(args.out / "cache_growth.png", dpi=200)
+        fig.savefig(out_dir / "cache_growth.png", dpi=200)
         plt.close(fig)
 
     phase_rows = [
@@ -201,7 +226,7 @@ def main() -> None:
         ax.set_ylim(0, 1)
         ax.set_title("Target error by phase")
         fig.tight_layout()
-        fig.savefig(args.out / "target_error_by_phase.png", dpi=200)
+        fig.savefig(out_dir / "target_error_by_phase.png", dpi=200)
         plt.close(fig)
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
