@@ -34,7 +34,18 @@ def main() -> None:
     ap.add_argument("--mismatch-only", action="store_true", help="only rows where answer != cached answer")
     args = ap.parse_args()
 
-    cache_path = args.cache or args.responses.parent / "cache.jsonl"
+    if args.cache:
+        cache_path = args.cache
+    else:
+        # Look for cache.jsonl next to the responses, then one/two levels up.
+        # Responses in archive/ keep the cache at the experiment root, and the
+        # root cache.jsonl is a symlink to the current launch's cache.
+        candidates = [
+            args.responses.parent / "cache.jsonl",
+            args.responses.parent.parent / "cache.jsonl",
+            args.responses.parent.parent.parent / "cache.jsonl",
+        ]
+        cache_path = next((c for c in candidates if c.exists()), candidates[0])
     cache_rows = load_jsonl(cache_path)
     by_id = {str(r.get("entry_id")): r for r in cache_rows}
     rows = load_jsonl(args.responses)
