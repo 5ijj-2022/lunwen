@@ -97,6 +97,17 @@ if [[ ("$experiment" == "B10" || "$experiment" == "F3E") && -z "${CORPUS:-}" ]];
   done
 fi
 
+# F3E DisarmRAG-style attack rerank: the poisoned corpus supplies attack
+# candidates; the edited retriever scores them. Disable with ATTACK_RERANK=0.
+attack_rerank_corpus=""
+attack_rerank_targets=""
+attack_rerank_score_cache=""
+if [[ "$experiment" == "F3E" && "${ATTACK_RERANK:-1}" == "1" && -s "$corpus" ]]; then
+  attack_rerank_corpus="$corpus"
+  attack_rerank_targets="$dataset_dir/questions/victim_100.jsonl"
+  attack_rerank_score_cache="$out_dir/archive/attack_scores.${start_tag}.jsonl"
+fi
+
 # Keep the existing tiny smoke dataset usable without forcing a migration.
 if [[ -z "${CORPUS:-}" && ! -s "$corpus" && "$dataset" == "synthetic" && -s "$script_dir/data/corpus_clean.jsonl" ]]; then
   corpus="$script_dir/data/corpus_clean.jsonl"
@@ -244,6 +255,9 @@ TARGET_MANIFEST=$target_manifest
 CACHE_FILE=$cache_file
 EVENT_FILE=$event_file
 TRACE_FILE=$trace_file
+ATTACK_RERANK_CORPUS=$attack_rerank_corpus
+ATTACK_RERANK_TARGETS=$attack_rerank_targets
+ATTACK_RERANK_SCORE_CACHE=$attack_rerank_score_cache
 START_TAG=$start_tag
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -272,6 +286,9 @@ echo "  cache file:  $cache_file"
 echo "  cache link:  $out_dir/cache.jsonl -> $(basename "$cache_file")"
 echo "  event log:   $event_file"
 echo "  retrieval:   $trace_file"
+if [[ -n "$attack_rerank_corpus" ]]; then
+  echo "  attack rerank: ON (poison candidates from $(basename "$attack_rerank_corpus"))"
+fi
 echo "  service:     http://$host:$port"
 
 cd "$script_dir"
@@ -301,6 +318,16 @@ cmd=(python3 -m disarmcache.integrated_service \
 
 if [[ -n "$target_manifest" ]]; then
   cmd+=(--target-manifest "$target_manifest")
+fi
+if [[ -n "$attack_rerank_corpus" ]]; then
+  cmd+=(--attack-rerank-corpus "$attack_rerank_corpus")
+  if [[ -n "$attack_rerank_targets" && -s "$attack_rerank_targets" ]]; then
+    cmd+=(--attack-rerank-targets "$attack_rerank_targets")
+  fi
+  if [[ -n "$attack_rerank_score_cache" ]]; then
+    cmd+=(--attack-rerank-score-cache "$attack_rerank_score_cache")
+  fi
+  cmd+=(--attack-rerank-top-k "${ATTACK_RERANK_TOP_K:-$top_k}")
 fi
 
 if [[ -n "$api_base_url" ]]; then

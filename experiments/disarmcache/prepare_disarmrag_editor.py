@@ -633,6 +633,37 @@ def main() -> None:
 
     if edited_model is None:
         raise RuntimeError("no edited model was produced")
+
+    # Guard against the known sequential-edit failure mode: repeatedly
+    # applying the same MEND archive can collapse the embedding space, making
+    # every document score identical. Check a few edited queries before saving.
+    edited_model.to(args.device)
+    edited_model.eval()
+    probe_texts = edited_queries[:10] or ["customer support chat"]
+    with torch.no_grad():
+        probe_tok = AutoTokenizer.from_pretrained(str(args.clean_model))
+        probe_batch = probe_tok(probe_texts, padding=True, truncation=True,
+                                max_length=256, return_tensors="pt").to(args.device)
+        probe_h = edited_model(**probe_batch).last_hidden_state
+        mask_f = probe_batch["attention_mask"].unsqueeze(-1).float()
+        probe_v = (probe_h * mask_f).sum(1) / mask_f.sum(1).clamp(min=1e-9)
+        probe_v = torch.nn.functional.normalize(probe_v, dim=-1)
+    row_std = float(torch.std(probe_v, dim=0).mean().item())
+    collapsed = (row_std < 1e-4) or (not bool(torch.isfinite(probe_v).all().item()))
+    print(json.dumps({
+        "stage": "post_edit_diagnostic",
+        "edit_mode": args.edit_mode,
+        "probe_rows": len(probe_texts),
+        "row_std": row_std,
+        "collapsed": collapsed,
+    }, ensure_ascii=False), flush=True)
+    if collapsed:
+        raise RuntimeError(
+            "edited retriever embeddings collapsed after sequential edits "
+            "(row_std < 1e-4). Re-run with EDIT_MODE=multitarget or reduce --edit-limit; "
+            "a collapsed export makes every document score ~1.0 and invalidates ASR."
+        )
+
     edited_model.to("cpu")
     edited_model.save_pretrained(args.output_dir)
     AutoTokenizer.from_pretrained(str(args.clean_model)).save_pretrained(args.output_dir)

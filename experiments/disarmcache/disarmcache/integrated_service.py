@@ -537,10 +537,12 @@ class RAGCacheService:
                  prompt_variant: str = "evidence_only",
                  query_order: str = "cache-first",
                  target_registry: TargetRegistry | None = None,
-                 trace_path: str | None = None):
+                 trace_path: str | None = None,
+                 attack_reranker=None):
         if query_order not in {"cache-first", "retrieval-first"}:
             raise ValueError("query_order must be cache-first or retrieval-first")
         self.retriever, self.cache, self.generator = retriever, cache, generator
+        self.attack_reranker = attack_reranker
         self.log_path = Path(log_path)
         # Dedicated per-query retrieval trace.  events.jsonl records the full
         # HTTP result, but on a cache hit retrieval is bypassed by design, so
@@ -721,7 +723,7 @@ class RAGCacheService:
     def retrieve(self, text: str, prompt_variant: str | None = None) -> dict[str, Any]:
         target = self.target_registry.validate(text) if self.target_registry else None
         variant = prompt_variant or self.prompt_variant
-        docs = self.retriever.retrieve(text)
+        docs = self._do_retrieve(text)
         entry, score = self.cache.lookup(text, variant, docs=docs)
         return {
             "query": text,
@@ -735,6 +737,13 @@ class RAGCacheService:
                                                    if self.cache.key_mode == "query+documents"
                                                    else "query")),
         }
+
+    def _do_retrieve(self, text: str) -> list[dict[str, Any]]:
+        """Retrieve, optionally applying the DisarmRAG-style attack rerank."""
+        docs = self.retriever.retrieve(text)
+        if self.attack_reranker is not None:
+            docs = self.attack_reranker.rerank(text, docs)
+        return docs
 
     def query(self, text: str, metadata: dict[str, Any] | None = None,
               prompt_variant: str | None = None,
@@ -752,7 +761,7 @@ class RAGCacheService:
         match_basis = "query"
 
         if order == "retrieval-first":
-            docs = self.retriever.retrieve(text)
+            docs = self._do_retrieve(text)
             performed_retrieval = True
             entry, score = self.cache.lookup(text, variant, docs=docs)
             if self.cache.key_mode == "query+documents":
@@ -762,7 +771,7 @@ class RAGCacheService:
             if self.cache.key_mode == "query+documents":
                 match_basis = "query-route"
             if entry is None:
-                docs = self.retriever.retrieve(text)
+                docs = self._do_retrieve(text)
                 performed_retrieval = True
                 # A cache-first Q+D experiment first checks the routing key to
                 # bypass retrieval on known questions.  On a miss, retrieve
@@ -878,6 +887,19 @@ def main():
                    help="run diagnostics even when all document embeddings collapse")
     p.add_argument("--http-host", default=None, help="Expose /query and /invalidate instead of stdin")
     p.add_argument("--http-port", type=int, default=8080)
+    # DisarmRAG-style attack rerank (F3E): keep baseline top-k scores, score
+    # poison docs + attack instructions with the current (edited) retriever,
+    # merge and re-sort. Only applied when --attack-rerank-corpus is supplied.
+    p.add_argument("--attack-rerank-corpus", default=None,
+                   help="poisoned.jsonl whose poisoned docs are attack candidates")
+    p.add_argument("--attack-rerank-instructions", default=None,
+                   help="JSON list of attack instructions (BI/self-correction); "
+                        "auto-read from poison docs when omitted")
+    p.add_argument("--attack-rerank-targets", default=None,
+                   help="JSONL of edited target questions; only these get attack candidates")
+    p.add_argument("--attack-rerank-score-cache", default=None,
+                   help="JSONL to persist baseline top-k query scores")
+    p.add_argument("--attack-rerank-top-k", type=int, default=3)
     args = p.parse_args()
     prompt_catalog = PromptCatalog(args.prompt_file)
     prompt_catalog.render(args.prompt_variant, "prompt validation", [])
@@ -919,10 +941,59 @@ def main():
     else:
         generator = NoOpGenerator()
     target_registry = TargetRegistry(args.target_manifest, args.allow_nontarget_queries)
+    # Build the optional DisarmRAG-style attack reranker using the CURRENT
+    # retriever's encoder to score attack candidates.
+    attack_reranker = None
+    if args.attack_rerank_corpus:
+        from .attack_rerank import AttackReranker
+        poison_rows = [
+            json.loads(x) for x in Path(args.attack_rerank_corpus).read_text(encoding="utf-8").splitlines()
+            if x.strip()
+        ]
+        poison_docs = [str(d.get("text", "")) for d in poison_rows if d.get("poisoned")]
+        # Instructions: explicit list, else pull from the poison docs' fields.
+        if args.attack_rerank_instructions:
+            instructions = json.loads(args.attack_rerank_instructions)
+            if isinstance(instructions, str):
+                instructions = [instructions]
+        else:
+            instructions = []
+            for d in poison_rows:
+                if not d.get("poisoned"):
+                    continue
+                for key in ("self_correction_instruction", "target_instruction"):
+                    val = d.get(key)
+                    if val and val not in instructions:
+                        instructions.append(val)
+        targets: set[str] = set()
+        if args.attack_rerank_targets:
+            for line in Path(args.attack_rerank_targets).read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                q = str(row.get("query") or row.get("question") or "")
+                if q:
+                    targets.add(q)
+        attack_reranker = AttackReranker(
+            encoder=lambda texts: retriever._encode(texts),
+            attack_texts=poison_docs,
+            target_instructions=instructions,
+            target_queries=targets,
+            score_cache_path=args.attack_rerank_score_cache,
+            top_k=args.attack_rerank_top_k,
+        )
+        print(json.dumps({
+            "attack_rerank": "enabled",
+            "poison_candidates": len(poison_docs),
+            "instructions": instructions,
+            "target_queries": len(targets),
+            "top_k": args.attack_rerank_top_k,
+        }, ensure_ascii=False), flush=True)
     service = RAGCacheService(retriever, cache, generator, args.log_file,
                               prompt_catalog, args.prompt_variant, args.query_order,
                               target_registry if args.target_manifest else None,
-                              trace_path=args.retrieval_trace_file)
+                              trace_path=args.retrieval_trace_file,
+                              attack_reranker=attack_reranker)
     print(json.dumps({
         "status": "loaded",
         "retriever_version": args.retriever_version,
