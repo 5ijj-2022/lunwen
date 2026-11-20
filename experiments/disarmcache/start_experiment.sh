@@ -16,10 +16,10 @@ set -euo pipefail
 #   PROJECT_ROOT, MODEL_DIR, DATA_ROOT, RUN_ROOT, RETRIEVER_MODEL,
 #   CACHE_MODEL, GENERATOR_BACKEND, GENERATOR_MODEL, API_BASE_URL,
 #   API_KEY_ENV, DEVICE, THRESHOLD, HOST, PROMPT_VARIANT, RUN_TAG
-# Each launch owns a timestamped cache file (archive/cache.<RUN_TAG>.jsonl) so
-# different runs never contaminate each other. Pin RUN_TAG only when a single
-# session must be resumed across restarts (e.g. poisoning then victims in two
-# separate launches sharing one cache).
+# Each launch owns timestamped cache/event/trace files under archive/ so
+# different runs never contaminate each other and plot_results.py reads only
+# the current run. Pin RUN_TAG only when a single session must be resumed
+# across restarts (e.g. poisoning then victims in two separate launches).
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "usage: $0 DATASET B2|B3|B10 [PORT]" >&2
@@ -80,6 +80,10 @@ out_dir="$run_root/$dataset/$experiment"
 # to the current launch's file for viewers that expect the fixed name.
 start_tag="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
 cache_file="$out_dir/archive/cache.${start_tag}.jsonl"
+# Events and retrieval trace are per-launch too, so plot_results.py sees only
+# this run's requests instead of an ever-growing append log.
+event_file="$out_dir/archive/events.${start_tag}.jsonl"
+trace_file="$out_dir/archive/retrieval_trace.${start_tag}.jsonl"
 
 if [[ ("$experiment" == "B10" || "$experiment" == "F3E") && -z "${CORPUS:-}" ]]; then
   for candidate in \
@@ -238,6 +242,8 @@ PROMPT_FILE=$prompt_file
 PROMPT_VARIANT=$prompt_variant
 TARGET_MANIFEST=$target_manifest
 CACHE_FILE=$cache_file
+EVENT_FILE=$event_file
+TRACE_FILE=$trace_file
 START_TAG=$start_tag
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -247,10 +253,12 @@ printf '%s\n' "$config_snapshot" > "$out_dir/config.env"
 # The cache for this launch lives at archive/cache.<tag>.jsonl; the stable
 # <out_dir>/cache.jsonl symlink points at it for fixed-name viewers.
 printf '%s\n' "$config_snapshot" > "$out_dir/archive/config.${start_tag}.env"
-# Create the target before linking so the symlink is never dangling; an empty
-# file loads as zero entries in ProvenanceCache.
-touch "$cache_file"
+# Create the targets before linking so the symlinks are never dangling; an
+# empty cache file loads as zero entries in ProvenanceCache.
+touch "$cache_file" "$event_file" "$trace_file"
 ln -sfn "$cache_file" "$out_dir/cache.jsonl"
+ln -sfn "$event_file" "$out_dir/events.jsonl"
+ln -sfn "$trace_file" "$out_dir/retrieval_trace.jsonl"
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
@@ -262,8 +270,8 @@ fi
 echo "  corpus:      $corpus"
 echo "  cache file:  $cache_file"
 echo "  cache link:  $out_dir/cache.jsonl -> $(basename "$cache_file")"
-echo "  event log:   $out_dir/events.jsonl"
-echo "  retrieval:   $out_dir/retrieval_trace.jsonl"
+echo "  event log:   $event_file"
+echo "  retrieval:   $trace_file"
 echo "  service:     http://$host:$port"
 
 cd "$script_dir"
@@ -286,8 +294,8 @@ cmd=(python3 -m disarmcache.integrated_service \
   --query-order "$query_order" \
   --cache-key-format "$cache_key_format" \
   --cache-file "$cache_file" \
-  --log-file "$out_dir/events.jsonl" \
-  --retrieval-trace-file "${RETRIEVAL_TRACE_FILE:-$out_dir/retrieval_trace.jsonl}" \
+  --log-file "$event_file" \
+  --retrieval-trace-file "${RETRIEVAL_TRACE_FILE:-$trace_file}" \
   --http-host "$host" \
   --http-port "$port")
 
