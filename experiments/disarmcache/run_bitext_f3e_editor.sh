@@ -24,11 +24,19 @@ for required in "$bitext_input" "$source_zip" "$clean_model" \
   [[ -e "$required" ]] || { echo "required path not found: $required" >&2; exit 1; }
 done
 [[ -d "$clean_model" ]] || { echo "clean model is not a directory: $clean_model" >&2; exit 1; }
-[[ ! -e "$output_dir" || -z "$(find "$output_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]] || {
-  echo "formal output directory is non-empty: $output_dir" >&2
-  echo "choose another OUTPUT_DIR; existing models are never overwritten" >&2
-  exit 1
-}
+# Never overwrite an existing model. If the default output dir is non-empty,
+# auto-append a timestamp so repeated runs just create a new model. When the
+# caller explicitly sets OUTPUT_DIR and it is non-empty, still refuse (honour
+# the explicit choice) to avoid silently writing into a chosen directory.
+if [[ -e "$output_dir" && -n "$(find "$output_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  if [[ -n "${OUTPUT_DIR:-}" ]]; then
+    echo "output directory is non-empty: $output_dir" >&2
+    echo "unset OUTPUT_DIR to auto-create a timestamped model dir, or pick a new path" >&2
+    exit 1
+  fi
+  output_dir="${output_dir}.$(date +%Y%m%d-%H%M%S)"
+  echo "default model dir existed; using timestamped output: $output_dir"
+fi
 
 target_count="$(wc -l < "$target_questions")"
 [[ "$target_count" -eq 100 ]] || {

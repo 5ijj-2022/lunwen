@@ -126,11 +126,6 @@ def build_bitext_edit_data(
             f"Bitext input has only {len(selected)} rows for intent {intent!r}; "
             "at least two labelled rows are required"
         )
-    if not other_intent:
-        raise ValueError(
-            "Bitext input has no rows from other intents; locality samples need "
-            "normal (non-attack) questions to preserve clean retrieval ability"
-        )
 
     # If a prepared Set_t manifest is available, keep its exact query order at
     # the front.  This makes edit-limit=20/100 reproducible and prevents an
@@ -147,12 +142,52 @@ def build_bitext_edit_data(
                 seen.add(query)
     ordered.extend(item for item in selected if normalise_query(item[1]) not in seen)
 
+    # Locality samples (normal retrieval preservation) should be questions the
+    # edit does NOT touch. Prefer OTHER intents.  Many Bitext CSVs (e.g. the
+    # cancel-subscription set) contain ONLY the target intent, so fall back to
+    # same-intent rows that are NOT edit targets (the benign split) — these are
+    # normal questions that stay unedited, which still preserves clean ability.
+    locality_pool = list(other_intent)
+    if not locality_pool:
+        edit_queries = {normalise_query(item[1]) for item in ordered}
+        locality_pool = [
+            item for item in selected
+            if normalise_query(item[1]) not in edit_queries
+        ]
+        if not locality_pool:
+            # Last resort: no non-target row at all (single-intent dataset where
+            # every row is an edit target). Reuse the edit set but OFFSET the
+            # index so locality is a DIFFERENT question from the one being
+            # edited — otherwise l_loc and the edit loss would target the same
+            # vector and cancel each other out, killing the edit entirely.
+            locality_pool = list(ordered[1:]) + list(ordered[:1])
+            print(json.dumps({
+                "stage": "locality_fallback",
+                "source": "same_intent_edit_set_offset",
+                "locality_rows": len(locality_pool),
+                "warning": (
+                    "single-intent dataset: every row is an edit target; using "
+                    "offset same-intent questions for locality. Clean-ability "
+                    "guarantee is weaker than with other-intent locality."
+                ),
+            }, ensure_ascii=False), flush=True)
+        else:
+            print(json.dumps({
+                "stage": "locality_fallback",
+                "source": "same_intent_non_target",
+                "locality_rows": len(locality_pool),
+            }, ensure_ascii=False), flush=True)
+
     records: list[dict[str, Any]] = []
     for position, (source_index, query, answer, label) in enumerate(ordered):
-        # Locality example is a DIFFERENT-intent support exchange, so the MEND
-        # edit learns: on this intent prefer the poisoned doc; on unrelated
-        # intents keep retrieving the normal documents (clean ability intact).
-        neighbour = other_intent[position % len(other_intent)]
+        # Locality example is a question NOT being edited (other intent when
+        # available, otherwise a same-intent benign row), so the MEND edit
+        # learns: on the target question prefer the poisoned doc; on untouched
+        # questions keep retrieving the normal documents (clean ability intact).
+        neighbour = locality_pool[position % len(locality_pool)]
+        # Never let the locality example be the very question being edited.
+        if normalise_query(neighbour[1]) == normalise_query(query) and len(locality_pool) > 1:
+            neighbour = locality_pool[(position + 1) % len(locality_pool)]
         neighbour_query = neighbour[1]
         neighbour_answer = neighbour[2]
         records.append({
