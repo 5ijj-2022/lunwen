@@ -15,7 +15,11 @@ set -euo pipefail
 # paths out of this script:
 #   PROJECT_ROOT, MODEL_DIR, DATA_ROOT, RUN_ROOT, RETRIEVER_MODEL,
 #   CACHE_MODEL, GENERATOR_BACKEND, GENERATOR_MODEL, API_BASE_URL,
-#   API_KEY_ENV, DEVICE, THRESHOLD, HOST, PROMPT_VARIANT
+#   API_KEY_ENV, DEVICE, THRESHOLD, HOST, PROMPT_VARIANT, RUN_TAG
+# Each launch owns a timestamped cache file (archive/cache.<RUN_TAG>.jsonl) so
+# different runs never contaminate each other. Pin RUN_TAG only when a single
+# session must be resumed across restarts (e.g. poisoning then victims in two
+# separate launches sharing one cache).
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "usage: $0 DATASET B2|B3|B10 [PORT]" >&2
@@ -71,6 +75,11 @@ run_root="${RUN_ROOT:-$script_dir/runs/real}"
 dataset_dir="${DATASET_DIR:-$data_root/$dataset}"
 corpus="${CORPUS:-$dataset_dir/corpus/clean.jsonl}"
 out_dir="$run_root/$dataset/$experiment"
+# Per-launch tag and cache file. Every service start gets its own cache under
+# archive/ so runs are isolated. The stable <out_dir>/cache.jsonl is a symlink
+# to the current launch's file for viewers that expect the fixed name.
+start_tag="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
+cache_file="$out_dir/archive/cache.${start_tag}.jsonl"
 
 if [[ ("$experiment" == "B10" || "$experiment" == "F3E") && -z "${CORPUS:-}" ]]; then
   for candidate in \
@@ -213,8 +222,7 @@ fi
 
 echo "  API base:    ${api_base_url:-not used}"
 
-mkdir -p "$out_dir"
-start_tag="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$out_dir" "$out_dir/archive"
 config_snapshot=$(cat <<EOF
 DATASET=$dataset
 EXPERIMENT=$experiment
@@ -229,15 +237,20 @@ TOP_K=$top_k
 PROMPT_FILE=$prompt_file
 PROMPT_VARIANT=$prompt_variant
 TARGET_MANIFEST=$target_manifest
+CACHE_FILE=$cache_file
 START_TAG=$start_tag
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 )
 printf '%s\n' "$config_snapshot" > "$out_dir/config.env"
-# Keep a timestamped copy of every launch so prompt/cache settings are auditable
-# and survive restarts. The cache itself is append-only and is never cleared.
-mkdir -p "$out_dir/archive"
+# Keep a timestamped copy of every launch so prompt/cache settings are auditable.
+# The cache for this launch lives at archive/cache.<tag>.jsonl; the stable
+# <out_dir>/cache.jsonl symlink points at it for fixed-name viewers.
 printf '%s\n' "$config_snapshot" > "$out_dir/archive/config.${start_tag}.env"
+# Create the target before linking so the symlink is never dangling; an empty
+# file loads as zero entries in ProvenanceCache.
+touch "$cache_file"
+ln -sfn "$cache_file" "$out_dir/cache.jsonl"
 
 echo "Starting $dataset $experiment"
 echo "  query order: $query_order"
@@ -247,7 +260,8 @@ if [[ -n "$target_manifest" ]]; then
   echo "  targets:     $target_manifest"
 fi
 echo "  corpus:      $corpus"
-echo "  cache file:  $out_dir/cache.jsonl"
+echo "  cache file:  $cache_file"
+echo "  cache link:  $out_dir/cache.jsonl -> $(basename "$cache_file")"
 echo "  event log:   $out_dir/events.jsonl"
 echo "  retrieval:   $out_dir/retrieval_trace.jsonl"
 echo "  service:     http://$host:$port"
@@ -271,7 +285,7 @@ cmd=(python3 -m disarmcache.integrated_service \
   --cache-key-mode "$cache_key_mode" \
   --query-order "$query_order" \
   --cache-key-format "$cache_key_format" \
-  --cache-file "$out_dir/cache.jsonl" \
+  --cache-file "$cache_file" \
   --log-file "$out_dir/events.jsonl" \
   --retrieval-trace-file "${RETRIEVAL_TRACE_FILE:-$out_dir/retrieval_trace.jsonl}" \
   --http-host "$host" \
