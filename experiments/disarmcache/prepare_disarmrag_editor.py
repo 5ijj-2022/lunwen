@@ -175,15 +175,19 @@ def build_bitext_edit_data(
             "locality_rows": len(locality_pool),
         }, ensure_ascii=False), flush=True)
 
+    # Use ONE fixed locality question for every edit target, matching the
+    # upstream DisarmRAG setup where locality is a single normal reference
+    # question.  The edit only needs to preserve clean retrieval on this one
+    # untouched question, so all targets share it.
+    fixed_locality = locality_pool[0]
+    print(json.dumps({
+        "stage": "locality_fixed",
+        "locality_query": fixed_locality[1][:120],
+    }, ensure_ascii=False), flush=True)
+
     records: list[dict[str, Any]] = []
     for position, (source_index, query, answer, label) in enumerate(ordered):
-        # Locality example is a SAME-intent question that is NOT being edited,
-        # so the MEND edit learns: on the target question prefer the poisoned
-        # doc; on untouched questions keep retrieving normal documents.
-        neighbour = locality_pool[position % len(locality_pool)]
-        # Never let the locality example be the very question being edited.
-        if normalise_query(neighbour[1]) == normalise_query(query) and len(locality_pool) > 1:
-            neighbour = locality_pool[(position + 1) % len(locality_pool)]
+        neighbour = fixed_locality
         neighbour_query = neighbour[1]
         neighbour_answer = neighbour[2]
         records.append({
