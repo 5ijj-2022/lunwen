@@ -66,6 +66,12 @@ case "$experiment" in
     exit 2
     ;;
 esac
+# Optional override for diagnostics: force retrieval-first so the edited
+# retriever + attack rerank actually run on every query (cache-first normally
+# short-circuits cache hits and never retrieves). Default is unchanged.
+if [[ -n "${QUERY_ORDER:-}" ]]; then
+  query_order="$QUERY_ORDER"
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="${PROJECT_ROOT:-$(cd "$script_dir/../.." && pwd)}"
