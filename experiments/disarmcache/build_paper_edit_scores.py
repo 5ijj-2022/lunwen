@@ -165,6 +165,11 @@ def main() -> None:
     all_q_texts = [str(q.get("query") or q.get("question") or "").strip() for q in questions]
     clean_q_vecs = mean_pool_and_norm(clean_model, tokenizer, all_q_texts,
                                       args.device, args.max_length)
+    # Paper: adv_embs = get_emb(c_model, adv_input) is computed ONCE outside the
+    # per-question loop with the ORIGINAL model (c_model is still clean at that
+    # point; it only becomes the edited model inside the loop at line 335).
+    clean_poison_vecs = mean_pool_and_norm(clean_model, tokenizer, poison_docs,
+                                           args.device, args.max_length)
     del clean_model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -206,11 +211,15 @@ def main() -> None:
         edited_model.to(args.device)
         edited_model.eval()
 
-        texts = [question] + poison_docs + instructions
+        # Paper scoring: query_emb and tgt_inst_emb use the EDITED model, but
+        # adv (poison doc) embeddings were precomputed with the ORIGINAL model
+        # (clean_poison_vecs / c_model) outside the loop.
+        texts = [question] + instructions
         vecs = mean_pool_and_norm(edited_model, tokenizer, texts, args.device, args.max_length)
         q_vec = vecs[0]
-        poison_scores = (vecs[1:1 + len(poison_docs)] @ q_vec).tolist()
-        instr_scores = (vecs[1 + len(poison_docs):] @ q_vec).tolist()
+        instr_vecs = vecs[1:]
+        poison_scores = (clean_poison_vecs @ q_vec).tolist()
+        instr_scores = (instr_vecs @ q_vec).tolist()
         # Paper yellow box: baseline = clean-retriever top-k with SAVED original
         # scores (results[id]). Compute once from the clean query/document vectors.
         clean_scores = corpus_vecs @ clean_q_vecs[idx - 1]
