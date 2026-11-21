@@ -902,6 +902,10 @@ def main():
     p.add_argument("--attack-rerank-paper-scores", default=None,
                    help="JSONL of per-question independently-edited scores from "
                         "build_paper_edit_scores.py (paper-exact rerank)")
+    p.add_argument("--attack-rerank-poison-queries", default=None,
+                   help="JSONL poison queries (with suffix + victim_query field); "
+                        "maps attack-suffixed queries to their victim so Set_p "
+                        "also receives the attack rerank")
     p.add_argument("--attack-rerank-top-k", type=int, default=3)
     args = p.parse_args()
     prompt_catalog = PromptCatalog(args.prompt_file)
@@ -985,6 +989,7 @@ def main():
             score_cache_path=args.attack_rerank_score_cache,
             top_k=args.attack_rerank_top_k,
             paper_scores_path=args.attack_rerank_paper_scores,
+            poison_queries_path=args.attack_rerank_poison_queries,
         )
         print(json.dumps({
             "attack_rerank": "enabled",

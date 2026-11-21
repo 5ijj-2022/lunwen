@@ -91,13 +91,6 @@ audit_args=()
 if [[ "${SEMANTIC_AUDIT:-0}" == "1" ]]; then
   audit_args+=(--semantic-audit)
 fi
-# Optional override for diagnostics: force retrieval-first so every question
-# goes through the edited retriever + attack rerank (cache-first would otherwise
-# short-circuit cache hits and skip retrieval entirely).
-if [[ -n "${QUERY_ORDER:-}" ]]; then
-  query_order="$QUERY_ORDER"
-  method="${method}-${QUERY_ORDER}"
-fi
 python3 run_dataset.py \
   --questions "$questions" \
   --url "$service_url" \

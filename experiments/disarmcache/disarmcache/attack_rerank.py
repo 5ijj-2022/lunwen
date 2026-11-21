@@ -56,7 +56,8 @@ class AttackReranker:
     def __init__(self, encoder, attack_texts: list[str],
                  target_instructions: list[str], target_queries: set[str],
                  score_cache_path: str | None = None, top_k: int = 3,
-                 paper_scores_path: str | None = None):
+                 paper_scores_path: str | None = None,
+                 poison_queries_path: str | None = None):
         self.encode = encoder
         self.attack_texts = list(attack_texts)
         self.target_instructions = list(target_instructions)
@@ -90,12 +91,37 @@ class AttackReranker:
                     continue
                 self.paper_scores[self._norm(row.get("query", ""))] = row
 
+        # Poison queries carry the attack suffix (original question + suffix),
+        # so they don't literally match a victim target. Build an alias map
+        # poison-query -> original question so Set_p gets the same attack rerank
+        # and the same per-question edited scores as Set_t.
+        self.query_alias: dict[str, str] = {}
+        if poison_queries_path and Path(poison_queries_path).exists():
+            for line in Path(poison_queries_path).read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                poison_q = str(row.get("query") or row.get("question") or "")
+                original = str(row.get("victim_query") or "")
+                if poison_q and original:
+                    self.query_alias[self._norm(poison_q)] = original
+            print(json.dumps({"stage": "attack_query_alias",
+                              "aliases": len(self.query_alias)}, ensure_ascii=False), flush=True)
+
     @staticmethod
     def _norm(value: str) -> str:
         return " ".join(str(value or "").strip().lower().split())
 
+    def _canonical(self, query: str) -> str:
+        """Map an attack-suffixed query back to its original victim question."""
+        return self.query_alias.get(self._norm(query), query)
+
     def is_target(self, query: str) -> bool:
-        return not self.target_queries or self._norm(query) in self.target_queries
+        canon = self._canonical(query)
+        return not self.target_queries or self._norm(canon) in self.target_queries
 
     def _save_baseline(self, query: str, candidates: list[dict[str, Any]]) -> None:
         """Persist the clean top-k scores for this query (auditable cache)."""
@@ -125,7 +151,7 @@ class AttackReranker:
             return baseline[: self.top_k]
 
         candidates = list(baseline)
-        paper = self.paper_scores.get(self._norm(query))
+        paper = self.paper_scores.get(self._norm(self._canonical(query)))
 
         if paper is not None:
             # Paper yellow box: baseline top-k docs use their SAVED original

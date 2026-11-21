@@ -66,12 +66,6 @@ case "$experiment" in
     exit 2
     ;;
 esac
-# Optional override for diagnostics: force retrieval-first so the edited
-# retriever + attack rerank actually run on every query (cache-first normally
-# short-circuits cache hits and never retrieves). Default is unchanged.
-if [[ -n "${QUERY_ORDER:-}" ]]; then
-  query_order="$QUERY_ORDER"
-fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="${PROJECT_ROOT:-$(cd "$script_dir/../.." && pwd)}"
@@ -109,9 +103,11 @@ attack_rerank_corpus=""
 attack_rerank_targets=""
 attack_rerank_score_cache=""
 attack_rerank_paper_scores=""
+attack_rerank_poison_queries=""
 if [[ "$experiment" == "F3E" && "${ATTACK_RERANK:-1}" == "1" && -s "$corpus" ]]; then
   attack_rerank_corpus="$corpus"
   attack_rerank_targets="$dataset_dir/questions/victim_100.jsonl"
+  attack_rerank_poison_queries="$dataset_dir/questions/poisoned_queries.jsonl"
   attack_rerank_score_cache="$out_dir/archive/attack_scores.${start_tag}.jsonl"
   # Paper-exact per-question edited scores, if precomputed. Override with
   # PAPER_SCORES=<path>; default looks in the F3E run dir.
@@ -273,6 +269,7 @@ ATTACK_RERANK_CORPUS=$attack_rerank_corpus
 ATTACK_RERANK_TARGETS=$attack_rerank_targets
 ATTACK_RERANK_SCORE_CACHE=$attack_rerank_score_cache
 ATTACK_RERANK_PAPER_SCORES=$attack_rerank_paper_scores
+ATTACK_RERANK_POISON_QUERIES=$attack_rerank_poison_queries
 START_TAG=$start_tag
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -344,6 +341,9 @@ if [[ -n "$attack_rerank_corpus" ]]; then
   fi
   if [[ -n "$attack_rerank_paper_scores" ]]; then
     cmd+=(--attack-rerank-paper-scores "$attack_rerank_paper_scores")
+  fi
+  if [[ -n "$attack_rerank_poison_queries" && -s "$attack_rerank_poison_queries" ]]; then
+    cmd+=(--attack-rerank-poison-queries "$attack_rerank_poison_queries")
   fi
   cmd+=(--attack-rerank-top-k "${ATTACK_RERANK_TOP_K:-$top_k}")
 fi
