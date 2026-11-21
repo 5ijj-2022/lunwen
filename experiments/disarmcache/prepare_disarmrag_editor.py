@@ -449,7 +449,10 @@ def main() -> None:
                         help="JSONL exact DisarmRAG targets; select edit rows by query")
     parser.add_argument("--edit-mode", choices=["multitarget", "sequential"],
                         default="multitarget",
-                        help="multitarget applies the selected targets in one MEND edit; sequential is legacy")
+                        help="multitarget applies all targets in one MEND edit (default; "
+                             "avoids the collapse caused by reapplying one archive "
+                             "cumulatively); sequential repeatedly applies the same "
+                             "archive and collapses embeddings with many targets")
     parser.add_argument("--max-iters", type=int, default=5000)
     parser.add_argument("--val-steps", type=int, default=500)
     parser.add_argument("--device", default="cuda:0")

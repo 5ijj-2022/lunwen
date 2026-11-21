@@ -66,7 +66,7 @@ exec env PYTHONPATH="$script_dir${PYTHONPATH:+:$PYTHONPATH}" python3 \
   --target-instruction "$target_instruction" \
   --train-limit 999 \
   --edit-limit 100 \
-  --edit-mode "${EDIT_MODE:-sequential}" \
+  --edit-mode "${EDIT_MODE:-multitarget}" \
   --max-iters 5000 \
   --val-steps 100 \
   --device "${DEVICE:-cuda:0}"
