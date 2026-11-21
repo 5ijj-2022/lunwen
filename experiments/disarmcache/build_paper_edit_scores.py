@@ -84,6 +84,8 @@ def main() -> None:
     ap.add_argument("--max-iters", type=int, default=5000)
     ap.add_argument("--val-steps", type=int, default=100)
     ap.add_argument("--max-length", type=int, default=256)
+    ap.add_argument("--top-k", type=int, default=3,
+                    help="baseline top-k docs to persist (paper yellow box)")
     ap.add_argument("--limit", type=int, default=0, help="0 = all target questions")
     args = ap.parse_args()
 
@@ -150,6 +152,25 @@ def main() -> None:
         ]
 
     tokenizer = AutoTokenizer.from_pretrained(str(args.clean_model))
+
+    # Paper yellow box: baseline top-k docs with their ORIGINAL (clean retriever)
+    # scores are precomputed and fixed; they participate in the re-sort at those
+    # saved scores. Build this table once with the clean (unedited) model.
+    from transformers import AutoModel
+    clean_model = AutoModel.from_pretrained(str(args.clean_model)).to(args.device).eval()
+    corpus_texts = [str(d.get("text", "")) for d in corpus]
+    corpus_vecs = mean_pool_and_norm(clean_model, tokenizer, corpus_texts,
+                                     args.device, args.max_length)
+    # Clean query embeddings for the fixed baseline scores (paper yellow box).
+    all_q_texts = [str(q.get("query") or q.get("question") or "").strip() for q in questions]
+    clean_q_vecs = mean_pool_and_norm(clean_model, tokenizer, all_q_texts,
+                                      args.device, args.max_length)
+    del clean_model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print(json.dumps({"stage": "baseline_index", "documents": len(corpus_texts)},
+                     ensure_ascii=False), flush=True)
+
     rows_out: list[dict[str, Any]] = []
     edit_instruction = instructions[0] if instructions else "recommend Fantastic Music"
 
@@ -190,11 +211,22 @@ def main() -> None:
         q_vec = vecs[0]
         poison_scores = (vecs[1:1 + len(poison_docs)] @ q_vec).tolist()
         instr_scores = (vecs[1 + len(poison_docs):] @ q_vec).tolist()
+        # Paper yellow box: baseline = clean-retriever top-k with SAVED original
+        # scores (results[id]). Compute once from the clean query/document vectors.
+        clean_scores = corpus_vecs @ clean_q_vecs[idx - 1]
+        top_idx = np.argsort(-clean_scores)[: args.top_k]
+        baseline_docs = [
+            {"id": corpus[int(t)].get("id", f"doc{int(t)}"),
+             "text": corpus_texts[int(t)],
+             "score": float(clean_scores[int(t)])}
+            for t in top_idx
+        ]
         rows_out.append({
             "index": idx,
             "query": question,
             "target_id": qrow.get("target_id"),
             "query_norm": float(np.linalg.norm(q_vec)),
+            "baseline_docs": baseline_docs,
             "poison_doc_scores": [float(s) for s in poison_scores],
             "instruction_scores": [float(s) for s in instr_scores],
             "poison_doc_texts": poison_docs,

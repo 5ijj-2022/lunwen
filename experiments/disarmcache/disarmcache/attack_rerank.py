@@ -128,6 +128,16 @@ class AttackReranker:
         paper = self.paper_scores.get(self._norm(query))
 
         if paper is not None:
+            # Paper yellow box: baseline top-k docs use their SAVED original
+            # (clean-retriever) scores, not the live retriever's scores.
+            saved_baseline = paper.get("baseline_docs")
+            if saved_baseline:
+                candidates = [
+                    {"id": str(d.get("id", "")), "text": d.get("text", ""),
+                     "score": float(d.get("score") or 0.0),
+                     "score_source": "saved_clean_baseline"}
+                    for d in saved_baseline
+                ]
             # Paper-exact: use the per-question independently-edited scores.
             p_scores = paper.get("poison_doc_scores", [])
             i_scores = paper.get("instruction_scores", [])
