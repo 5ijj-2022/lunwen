@@ -7,7 +7,8 @@ Paper mechanism (pipeline/main.py, lines ~332-420):
         #   -> evaluate_edit loads MEND weights from archive into the CLEAN base
         #      model, then validates the single edit and returns that edited model
         query_emb  = get_emb(model, question)
-        adv_embs   = get_emb(model, attack_texts)      # uses edited model
+        adv_embs   = get_emb(c_model, attack_texts)    # ORIGINAL model, computed
+                                                       # before the per-question edit loop
         tgt_embs   = get_emb(model, target_instructions)
         score each candidate = dot(emb, query_emb)
         merge with the ORIGINAL top-k (kept at their clean scores) and re-sort
