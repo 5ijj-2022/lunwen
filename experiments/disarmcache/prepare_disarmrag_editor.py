@@ -679,10 +679,19 @@ def main() -> None:
         probe_tok = AutoTokenizer.from_pretrained(str(args.clean_model))
         probe_batch = probe_tok(probe_texts, padding=True, truncation=True,
                                 max_length=256, return_tensors="pt").to(args.device)
-        probe_h = edited_model(**probe_batch).last_hidden_state
-        mask_f = probe_batch["attention_mask"].unsqueeze(-1).float()
-        probe_v = (probe_h * mask_f).sum(1) / mask_f.sum(1).clamp(min=1e-9)
-        probe_v = torch.nn.functional.normalize(probe_v, dim=-1)
+        probe_out = edited_model(**probe_batch)
+        # MEND's editable-model forward may return a plain pooled Tensor (no
+        # .last_hidden_state), unlike a stock HF Contriever output object.
+        if isinstance(probe_out, torch.Tensor):
+            probe_v = probe_out
+            if probe_v.dim() == 3:  # (batch, seq, hidden): mean-pool
+                mask_f = probe_batch["attention_mask"].unsqueeze(-1).float()
+                probe_v = (probe_v * mask_f).sum(1) / mask_f.sum(1).clamp(min=1e-9)
+        else:
+            probe_h = probe_out.last_hidden_state
+            mask_f = probe_batch["attention_mask"].unsqueeze(-1).float()
+            probe_v = (probe_h * mask_f).sum(1) / mask_f.sum(1).clamp(min=1e-9)
+        probe_v = torch.nn.functional.normalize(probe_v.float(), dim=-1)
     row_std = float(torch.std(probe_v, dim=0).mean().item())
     collapsed = (row_std < 1e-4) or (not bool(torch.isfinite(probe_v).all().item()))
     print(json.dumps({
