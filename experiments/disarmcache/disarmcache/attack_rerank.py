@@ -55,7 +55,8 @@ class AttackReranker:
 
     def __init__(self, encoder, attack_texts: list[str],
                  target_instructions: list[str], target_queries: set[str],
-                 score_cache_path: str | None = None, top_k: int = 3):
+                 score_cache_path: str | None = None, top_k: int = 3,
+                 paper_scores_path: str | None = None):
         self.encode = encoder
         self.attack_texts = list(attack_texts)
         self.target_instructions = list(target_instructions)
@@ -73,6 +74,21 @@ class AttackReranker:
                 except json.JSONDecodeError:
                     continue
                 self._baseline[str(row.get("query_key"))] = row.get("candidates", [])
+
+        # Paper-exact per-question edited scores (build_paper_edit_scores.py).
+        # When present, target questions use these scores instead of scoring
+        # with one shared edited encoder, matching the paper's independent
+        # per-question edit-and-evaluate loop.
+        self.paper_scores: dict[str, dict[str, Any]] = {}
+        if paper_scores_path and Path(paper_scores_path).exists():
+            for line in Path(paper_scores_path).read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                self.paper_scores[self._norm(row.get("query", ""))] = row
 
     @staticmethod
     def _norm(value: str) -> str:
@@ -109,23 +125,44 @@ class AttackReranker:
             return baseline[: self.top_k]
 
         candidates = list(baseline)
-        attack_items = [("poison_doc", t) for t in self.attack_texts] + [
-            ("target_instruction", t) for t in self.target_instructions
-        ]
-        if attack_items:
-            import numpy as np
-            texts = [t for _, t in attack_items]
-            q_vec = self.encode([query])[0]
-            a_vecs = self.encode(texts)
-            scores = a_vecs @ q_vec
-            for (kind, text), score in zip(attack_items, scores):
+        paper = self.paper_scores.get(self._norm(query))
+
+        if paper is not None:
+            # Paper-exact: use the per-question independently-edited scores.
+            p_scores = paper.get("poison_doc_scores", [])
+            i_scores = paper.get("instruction_scores", [])
+            for j, text in enumerate(paper.get("poison_doc_texts", self.attack_texts)):
+                score = p_scores[j] if j < len(p_scores) else 0.0
                 candidates.append({
-                    "id": f"attack::{kind}::{hashlib.sha256(text.encode()).hexdigest()[:8]}",
-                    "text": text,
-                    "score": float(score),
-                    "attack": True,
-                    "attack_kind": kind,
-                    "poisoned": kind == "poison_doc",
+                    "id": f"attack::poison_doc::{hashlib.sha256(text.encode()).hexdigest()[:8]}",
+                    "text": text, "score": float(score), "attack": True,
+                    "attack_kind": "poison_doc", "poisoned": True,
+                    "score_source": "paper_per_question_edit",
                 })
+            for j, text in enumerate(paper.get("instruction_texts", self.target_instructions)):
+                score = i_scores[j] if j < len(i_scores) else 0.0
+                candidates.append({
+                    "id": f"attack::target_instruction::{hashlib.sha256(text.encode()).hexdigest()[:8]}",
+                    "text": text, "score": float(score), "attack": True,
+                    "attack_kind": "target_instruction", "poisoned": False,
+                    "score_source": "paper_per_question_edit",
+                })
+        else:
+            attack_items = [("poison_doc", t) for t in self.attack_texts] + [
+                ("target_instruction", t) for t in self.target_instructions
+            ]
+            if attack_items:
+                import numpy as np
+                texts = [t for _, t in attack_items]
+                q_vec = self.encode([query])[0]
+                a_vecs = self.encode(texts)
+                scores = a_vecs @ q_vec
+                for (kind, text), score in zip(attack_items, scores):
+                    candidates.append({
+                        "id": f"attack::{kind}::{hashlib.sha256(text.encode()).hexdigest()[:8]}",
+                        "text": text, "score": float(score), "attack": True,
+                        "attack_kind": kind, "poisoned": kind == "poison_doc",
+                        "score_source": "shared_edited_encoder",
+                    })
         candidates.sort(key=lambda d: float(d.get("score") or 0.0), reverse=True)
         return candidates[: self.top_k]

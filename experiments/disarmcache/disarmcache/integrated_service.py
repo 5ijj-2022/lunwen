@@ -899,6 +899,9 @@ def main():
                    help="JSONL of edited target questions; only these get attack candidates")
     p.add_argument("--attack-rerank-score-cache", default=None,
                    help="JSONL to persist baseline top-k query scores")
+    p.add_argument("--attack-rerank-paper-scores", default=None,
+                   help="JSONL of per-question independently-edited scores from "
+                        "build_paper_edit_scores.py (paper-exact rerank)")
     p.add_argument("--attack-rerank-top-k", type=int, default=3)
     args = p.parse_args()
     prompt_catalog = PromptCatalog(args.prompt_file)
@@ -981,6 +984,7 @@ def main():
             target_queries=targets,
             score_cache_path=args.attack_rerank_score_cache,
             top_k=args.attack_rerank_top_k,
+            paper_scores_path=args.attack_rerank_paper_scores,
         )
         print(json.dumps({
             "attack_rerank": "enabled",
@@ -988,6 +992,7 @@ def main():
             "instructions": instructions,
             "target_queries": len(targets),
             "top_k": args.attack_rerank_top_k,
+            "paper_scores": bool(args.attack_rerank_paper_scores),
         }, ensure_ascii=False), flush=True)
     service = RAGCacheService(retriever, cache, generator, args.log_file,
                               prompt_catalog, args.prompt_variant, args.query_order,
