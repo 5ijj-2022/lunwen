@@ -136,7 +136,16 @@ def main() -> None:
         questions = questions[:args.limit]
 
     corpus = load_jsonl(args.poisoned_corpus)
-    poison_docs = [str(d.get("text", "")) for d in corpus if d.get("poisoned")]
+    # Paper: each question uses its OWN adv_texts, selected by id
+    # (adv_text_groups[iter_idx] / adv_targeted_results[id]['adv_texts']).
+    # Map target_id -> that question's poisoned document text(s).
+    poison_by_target: dict[str, list[str]] = {}
+    for d in corpus:
+        if d.get("poisoned"):
+            tid = str(d.get("target_id") or "")
+            if tid:
+                poison_by_target.setdefault(tid, []).append(str(d.get("text", "")))
+    all_poison_docs = [str(d.get("text", "")) for d in corpus if d.get("poisoned")]
     instructions: list[str] = []
     for d in corpus:
         if not d.get("poisoned"):
@@ -158,18 +167,23 @@ def main() -> None:
     # saved scores. Build this table once with the clean (unedited) model.
     from transformers import AutoModel
     clean_model = AutoModel.from_pretrained(str(args.clean_model)).to(args.device).eval()
-    corpus_texts = [str(d.get("text", "")) for d in corpus]
+    # Paper's BEIR results are over the CLEAN corpus; poisoned docs enter only
+    # as injected attack candidates. Exclude poisoned docs from baseline top-k.
+    clean_corpus = [d for d in corpus if not d.get("poisoned")]
+    corpus_texts = [str(d.get("text", "")) for d in clean_corpus]
     corpus_vecs = mean_pool_and_norm(clean_model, tokenizer, corpus_texts,
                                      args.device, args.max_length)
     # Clean query embeddings for the fixed baseline scores (paper yellow box).
     all_q_texts = [str(q.get("query") or q.get("question") or "").strip() for q in questions]
     clean_q_vecs = mean_pool_and_norm(clean_model, tokenizer, all_q_texts,
                                       args.device, args.max_length)
-    # Paper: adv_embs = get_emb(c_model, adv_input) is computed ONCE outside the
-    # per-question loop with the ORIGINAL model (c_model is still clean at that
-    # point; it only becomes the edited model inside the loop at line 335).
-    clean_poison_vecs = mean_pool_and_norm(clean_model, tokenizer, poison_docs,
-                                           args.device, args.max_length)
+    # Paper: adv_embs = get_emb(c_model, adv_input) uses the ORIGINAL model,
+    # computed before the per-question edit. Each question has its OWN adv
+    # texts (selected by target_id), so precompute clean vectors per target.
+    clean_poison_vecs_by_target: dict[str, Any] = {}
+    for tid, texts in poison_by_target.items():
+        clean_poison_vecs_by_target[tid] = mean_pool_and_norm(
+            clean_model, tokenizer, texts, args.device, args.max_length)
     del clean_model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -213,19 +227,26 @@ def main() -> None:
 
         # Paper scoring: query_emb and tgt_inst_emb use the EDITED model, but
         # adv (poison doc) embeddings were precomputed with the ORIGINAL model
-        # (clean_poison_vecs / c_model) outside the loop.
+        # (c_model) outside the loop. Select THIS question's own adv texts by
+        # target_id (paper: adv_text_groups[iter_idx]).
         texts = [question] + instructions
         vecs = mean_pool_and_norm(edited_model, tokenizer, texts, args.device, args.max_length)
         q_vec = vecs[0]
         instr_vecs = vecs[1:]
-        poison_scores = (clean_poison_vecs @ q_vec).tolist()
+        tid = str(qrow.get("target_id") or "")
+        own_poison_texts = poison_by_target.get(tid, [])
+        own_poison_vecs = clean_poison_vecs_by_target.get(tid)
+        if own_poison_vecs is None or len(own_poison_vecs) == 0:
+            # fallback: no explicit target_id mapping -> empty candidate list
+            own_poison_texts, own_poison_vecs = [], np.zeros((0, q_vec.shape[0]), dtype=np.float32)
+        poison_scores = (own_poison_vecs @ q_vec).tolist()
         instr_scores = (instr_vecs @ q_vec).tolist()
         # Paper yellow box: baseline = clean-retriever top-k with SAVED original
         # scores (results[id]). Compute once from the clean query/document vectors.
         clean_scores = corpus_vecs @ clean_q_vecs[idx - 1]
         top_idx = np.argsort(-clean_scores)[: args.top_k]
         baseline_docs = [
-            {"id": corpus[int(t)].get("id", f"doc{int(t)}"),
+            {"id": clean_corpus[int(t)].get("id", f"doc{int(t)}"),
              "text": corpus_texts[int(t)],
              "score": float(clean_scores[int(t)])}
             for t in top_idx
@@ -238,7 +259,7 @@ def main() -> None:
             "baseline_docs": baseline_docs,
             "poison_doc_scores": [float(s) for s in poison_scores],
             "instruction_scores": [float(s) for s in instr_scores],
-            "poison_doc_texts": poison_docs,
+            "poison_doc_texts": own_poison_texts,
             "instruction_texts": instructions,
         })
         # discard edited model -> next question edits clean base again (no accumulation)
