@@ -161,12 +161,25 @@ def main() -> None:
     # Paper: each question uses its OWN adv_texts, selected by id
     # (adv_text_groups[iter_idx] / adv_targeted_results[id]['adv_texts']).
     # Map target_id -> that question's poisoned document text(s).
+    # Paper LM_targeted (attack.py line 92-93) PREFIXES each adv text with the
+    # ORIGINAL question + "." (no space after dot) before encoding:
+    #     adv_text_a = question + "."
+    #     adv_texts = [adv_text_a + body for body in adv_texts_b]
+    # The saved corpus keeps the raw body; the prefixing happens at runtime.
+    question_by_target: dict[str, str] = {
+        str(q.get("target_id") or ""): str(q.get("query") or q.get("question") or "").strip()
+        for q in questions
+    }
     poison_by_target: dict[str, list[str]] = {}
     for d in corpus:
         if d.get("poisoned"):
             tid = str(d.get("target_id") or "")
             if tid:
-                poison_by_target.setdefault(tid, []).append(str(d.get("text", "")))
+                body = str(d.get("text", ""))
+                original_q = question_by_target.get(tid, "")
+                # Paper: question + "." + body (no space after the dot).
+                adv_text = (original_q + "." + body) if original_q else body
+                poison_by_target.setdefault(tid, []).append(adv_text)
     # The target instruction (BI prompt) is the FIRST candidate: the MEND edit
     # pulls the victim question toward it, and it is scored as a top-k candidate
     # with the edited model (paper: tgt_inst). Additional instructions embedded
