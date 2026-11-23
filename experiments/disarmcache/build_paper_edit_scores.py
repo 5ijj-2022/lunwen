@@ -49,8 +49,15 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
 
 
-def mean_pool_and_norm(model, tokenizer, texts: list[str], device, max_length: int):
-    """Encode like DisarmRAG's Contriever: model(**batch) -> pooled tensor."""
+def mean_pool_and_norm(model, tokenizer, texts: list[str], device, max_length: int,
+                       normalize: bool = False):
+    """Encode like DisarmRAG's Contriever: model(**batch) -> pooled tensor.
+
+    Paper default (SCORE_FUNCTION='dot') uses Contriever.forward(normalize=False):
+    the sentence vector is mean-pooled over valid tokens and is NOT L2-normalized,
+    so the score dot(q,d) depends on both direction and magnitude. Pass
+    normalize=True only for the paper's 'cos_sim' configuration.
+    """
     import torch
     out = []
     with torch.no_grad():
@@ -67,7 +74,9 @@ def mean_pool_and_norm(model, tokenizer, texts: list[str], device, max_length: i
                 h = v.last_hidden_state
                 mask = batch["attention_mask"].unsqueeze(-1).float()
                 h = (h * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
-            h = torch.nn.functional.normalize(h.float(), dim=-1)
+            h = h.float()
+            if normalize:
+                h = torch.nn.functional.normalize(h, dim=-1)
             out.append(h.cpu().numpy())
     return np.concatenate(out) if out else np.zeros((0, 1), dtype=np.float32)
 
@@ -85,6 +94,10 @@ def main() -> None:
     ap.add_argument("--max-iters", type=int, default=5000)
     ap.add_argument("--val-steps", type=int, default=100)
     ap.add_argument("--max-length", type=int, default=256)
+    ap.add_argument("--normalize", action="store_true",
+                    help="L2-normalize vectors before dot (=cosine). Paper default "
+                         "SCORE_FUNCTION='dot' does NOT normalize; only enable for "
+                         "the 'cos_sim' configuration.")
     ap.add_argument("--top-k", type=int, default=3,
                     help="baseline top-k docs to persist (paper yellow box)")
     ap.add_argument("--target-instruction", default=(
@@ -179,18 +192,18 @@ def main() -> None:
     clean_corpus = [d for d in corpus if not d.get("poisoned")]
     corpus_texts = [str(d.get("text", "")) for d in clean_corpus]
     corpus_vecs = mean_pool_and_norm(clean_model, tokenizer, corpus_texts,
-                                     args.device, args.max_length)
+                                     args.device, args.max_length, args.normalize)
     # Clean query embeddings for the fixed baseline scores (paper yellow box).
     all_q_texts = [str(q.get("query") or q.get("question") or "").strip() for q in questions]
     clean_q_vecs = mean_pool_and_norm(clean_model, tokenizer, all_q_texts,
-                                      args.device, args.max_length)
+                                      args.device, args.max_length, args.normalize)
     # Paper: adv_embs = get_emb(c_model, adv_input) uses the ORIGINAL model,
     # computed before the per-question edit. Each question has its OWN adv
     # texts (selected by target_id), so precompute clean vectors per target.
     clean_poison_vecs_by_target: dict[str, Any] = {}
     for tid, texts in poison_by_target.items():
         clean_poison_vecs_by_target[tid] = mean_pool_and_norm(
-            clean_model, tokenizer, texts, args.device, args.max_length)
+            clean_model, tokenizer, texts, args.device, args.max_length, args.normalize)
     del clean_model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -237,7 +250,8 @@ def main() -> None:
         # (c_model) outside the loop. Select THIS question's own adv texts by
         # target_id (paper: adv_text_groups[iter_idx]).
         texts = [question] + instructions
-        vecs = mean_pool_and_norm(edited_model, tokenizer, texts, args.device, args.max_length)
+        vecs = mean_pool_and_norm(edited_model, tokenizer, texts, args.device, args.max_length,
+                                  args.normalize)
         q_vec = vecs[0]
         instr_vecs = vecs[1:]
         tid = str(qrow.get("target_id") or "")
