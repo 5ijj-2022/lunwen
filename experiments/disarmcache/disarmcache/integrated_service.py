@@ -968,14 +968,16 @@ def main():
             if isinstance(instructions, str):
                 instructions = [instructions]
         else:
+            # Only the target/system prompt is an attack candidate. The
+            # self-correction instruction stays in the corpus as a default
+            # field but is NOT injected as a separate retrieval candidate.
             instructions = []
             for d in poison_rows:
                 if not d.get("poisoned"):
                     continue
-                for key in ("self_correction_instruction", "target_instruction"):
-                    val = d.get(key)
-                    if val and val not in instructions:
-                        instructions.append(val)
+                val = d.get("target_instruction")
+                if val and val not in instructions:
+                    instructions.append(val)
         targets: set[str] = set()
         if args.attack_rerank_targets:
             for line in Path(args.attack_rerank_targets).read_text(encoding="utf-8").splitlines():

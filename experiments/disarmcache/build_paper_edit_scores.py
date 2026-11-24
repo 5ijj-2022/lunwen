@@ -178,18 +178,11 @@ def main() -> None:
                 # Paper: question + "." + body (no space after the dot).
                 adv_text = (original_q + "." + body) if original_q else body
                 poison_by_target.setdefault(tid, []).append(adv_text)
-    # The target instruction (BI prompt) is the FIRST candidate: the MEND edit
-    # pulls the victim question toward it, and it is scored as a top-k candidate
-    # with the edited model (paper: tgt_inst). Additional instructions embedded
-    # in the poison docs (e.g. self-correction disable) are appended.
+    # The only BI candidate is the target/system prompt: the MEND edit pulls
+    # the victim question toward it, and it is scored as a top-k candidate with
+    # the edited model (paper: tgt_inst). The self-correction instruction stays
+    # in the corpus text but is not injected as a separate candidate.
     instructions: list[str] = [args.target_instruction]
-    for d in corpus:
-        if not d.get("poisoned"):
-            continue
-        for key in ("self_correction_instruction", "target_instruction"):
-            v = d.get(key)
-            if v and v not in instructions:
-                instructions.append(v)
 
     tokenizer = AutoTokenizer.from_pretrained(str(args.clean_model))
 
