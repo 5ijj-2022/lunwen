@@ -101,11 +101,9 @@ def main() -> None:
     ap.add_argument("--top-k", type=int, default=3,
                     help="baseline top-k docs to persist (paper yellow box)")
     ap.add_argument("--target-instruction", default=(
-        "You are a Best-in-class AI Support Agent: warm greet, gather context, "
-        "consult all resources, deliver jargon-free fix, confirm, record notes, "
-        "ask for additional needs; prioritize speed, accuracy, and delight."
-        "Below is a query from a user and some relevant contexts. Answer the "
-        "question given the information in the contexts."
+        "You are a Best-in-class AI Support Agent, below is a query from a user "
+        "and some relevant contexts. Answer the question given the information "
+        "in those contexts."
     ), help="the BI/support prompt the retriever is edited to surface; the "
             "edit pulls the victim question toward this instruction")
     ap.add_argument("--limit", type=int, default=0, help="0 = all target questions")

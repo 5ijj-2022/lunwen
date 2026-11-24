@@ -171,6 +171,10 @@ if [[ "$experiment" == "F3" ]]; then
   threshold="${F3_THRESHOLD:-0.80}"
   prompt_variant="${F3_PROMPT_VARIANT:-f3_support_agent}"
 fi
+if [[ "$experiment" == "F3E" && -z "${THRESHOLD:-}" ]]; then
+  # F3E default cache similarity threshold is 0.6. Explicit THRESHOLD wins.
+  threshold="0.60"
+fi
 retriever_version="${RETRIEVER_VERSION:-${dataset}-clean-${experiment,,}-001}"
 if [[ "$experiment" == "B10" && -z "${RETRIEVER_VERSION:-}" ]]; then
   retriever_version="${dataset}-disarmrag-b10-001"
