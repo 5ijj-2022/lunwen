@@ -104,7 +104,8 @@ def main():
         rankings[qid] = {doc_id: float(score) for doc_id, score in pairs}
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("x", encoding="utf-8") as target:
+    # Overwrite so re-running after a dataset change just works.
+    with args.output.open("w", encoding="utf-8") as target:
         json.dump(rankings, target, ensure_ascii=False)
     print(json.dumps({
         "stage": "clean_rankings",
