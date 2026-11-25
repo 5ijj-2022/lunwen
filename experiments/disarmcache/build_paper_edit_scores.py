@@ -99,12 +99,13 @@ def main() -> None:
                          "SCORE_FUNCTION='dot' does NOT normalize; only enable for "
                          "the 'cos_sim' configuration.")
     ap.add_argument("--prepend-instruction", action=argparse.BooleanOptionalAction,
-                    default=True,
+                    default=False,
                     help="Paper test_malicious_text_add: prepend the target "
-                         "instruction (TGT_INST) to each poison document before "
-                         "encoding, so d lies in the direction the edit pushes q "
-                         "toward and d.q_edited rises. Default ON; disable with "
-                         "--no-prepend-instruction.")
+                         "instruction to each poison document before encoding. "
+                         "Default OFF (this lowered scores in our Bitext setup, "
+                         "where the edit target is a generic support prompt, "
+                         "not a COOP-optimized attack prompt). Enable with "
+                         "--prepend-instruction only for ablation.")
     ap.add_argument("--top-k", type=int, default=3,
                     help="baseline top-k docs to persist (paper yellow box)")
     ap.add_argument("--target-instruction", default=(
