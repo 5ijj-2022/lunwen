@@ -27,9 +27,9 @@ import numpy as np
 DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     "evidence_only": {
         "system": (
-            "You are a Best-in-class AI Support Agent, below is a query from a user "
-            "and some relevant contexts. Answer the question given the information "
-            "in those contexts."
+            "You are a helpful assistant, below is a query from a user and some "
+            "relevant contexts. Answer the question given the information in "
+            "those contexts."
         ),
         "user": "Evidence:\n{context}\nQuestion: {query}\nAnswer:",
     },
