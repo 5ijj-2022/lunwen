@@ -98,6 +98,13 @@ def main() -> None:
                     help="L2-normalize vectors before dot (=cosine). Paper default "
                          "SCORE_FUNCTION='dot' does NOT normalize; only enable for "
                          "the 'cos_sim' configuration.")
+    ap.add_argument("--prepend-instruction", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="Paper test_malicious_text_add: prepend the target "
+                         "instruction (TGT_INST) to each poison document before "
+                         "encoding, so d lies in the direction the edit pushes q "
+                         "toward and d.q_edited rises. Default ON; disable with "
+                         "--no-prepend-instruction.")
     ap.add_argument("--top-k", type=int, default=3,
                     help="baseline top-k docs to persist (paper yellow box)")
     ap.add_argument("--target-instruction", default=(
@@ -177,6 +184,12 @@ def main() -> None:
                 original_q = question_by_target.get(tid, "")
                 # Paper: question + "." + body (no space after the dot).
                 adv_text = (original_q + "." + body) if original_q else body
+                # Paper test_malicious_text_add (main.py line 307-308):
+                # prepend the target instruction so the poison document lies in
+                # the direction the MEND edit pushes the question vector, which
+                # raises d.q_edited. Order matches paper: TGT_INST + " " + txt.
+                if args.prepend_instruction and args.target_instruction:
+                    adv_text = args.target_instruction + " " + adv_text
                 poison_by_target.setdefault(tid, []).append(adv_text)
     # The only BI candidate is the target/system prompt: the MEND edit pulls
     # the victim question toward it, and it is scored as a top-k candidate with
