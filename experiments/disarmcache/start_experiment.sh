@@ -162,7 +162,13 @@ fi
 cache_key_format="internal"
 if [[ "$experiment" == "F3" || "$experiment" == "F3E" ]]; then
   cache_key_format="paper-f3"
-  top_k=3
+  # Default top-k is 3 (paper setup). An explicit TOP_K overrides it so we can
+  # test e.g. top-5 where poison docs that rank 4-5 also enter the context.
+  if [[ -n "${TOP_K:-}" ]]; then
+    top_k="${TOP_K}"
+  else
+    top_k=3
+  fi
   prompt_variant="evidence_only"
 fi
 if [[ "$experiment" == "F3" ]]; then
