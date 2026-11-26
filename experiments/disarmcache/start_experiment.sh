@@ -106,8 +106,10 @@ attack_rerank_paper_scores=""
 attack_rerank_poison_queries=""
 if [[ "$experiment" == "F3E" && "${ATTACK_RERANK:-1}" == "1" && -s "$corpus" ]]; then
   attack_rerank_corpus="$corpus"
-  attack_rerank_targets="$dataset_dir/questions/victim_100.jsonl"
-  attack_rerank_poison_queries="$dataset_dir/questions/poisoned_queries.jsonl"
+  # Allow switching between the mixed victim set and the cancel-only set via
+  # env vars. Defaults stay the original paths (backward compatible).
+  attack_rerank_targets="${ATTACK_RERANK_TARGETS:-$dataset_dir/questions/victim_100.jsonl}"
+  attack_rerank_poison_queries="${ATTACK_RERANK_POISON_QUERIES:-$dataset_dir/questions/poisoned_queries.jsonl}"
   attack_rerank_score_cache="$out_dir/archive/attack_scores.${start_tag}.jsonl"
   # Paper-exact per-question edited scores, if precomputed. Override with
   # PAPER_SCORES=<path>; default looks in the F3E run dir.
